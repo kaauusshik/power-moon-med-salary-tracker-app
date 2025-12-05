@@ -107,7 +107,10 @@ export function AddEmployeeDialog({
                 <FormItem>
                   <FormLabel>Full name</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g. Ananya Sharma" {...field} />
+                    <Input
+                      placeholder="Enter Employee Name Here.."
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -121,7 +124,7 @@ export function AddEmployeeDialog({
                 <FormItem>
                   <FormLabel>Role (optional)</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g. Software Engineer" {...field} />
+                    <Input placeholder="e.g. Technical Assistant" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

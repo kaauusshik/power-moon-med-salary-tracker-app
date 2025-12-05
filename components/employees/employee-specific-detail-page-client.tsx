@@ -12,9 +12,11 @@ import {
   CalendarDays,
   ReceiptIndianRupee,
   UsersIcon,
+  Pencil,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Employee, SalaryRecord, SalaryExpense } from "@/lib/types";
+import { EditSalaryRecordDialog } from "@/components/salary/edit-salary-record-dialog";
 import {
   Table,
   TableBody,
@@ -50,6 +52,87 @@ export function EmployeeSpecificDetailPageClient() {
   const [records, setRecords] = useState<SalaryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [editRecord, setEditRecord] = useState<SalaryRecord | null>(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+
+  const handleSaveRecord = async (updated: SalaryRecord) => {
+    try {
+      // get current user id (for user_id filter)
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+
+      if (!userId) {
+        console.error("No authenticated user, cannot update salary record.");
+        return;
+      }
+
+      // 1. Update main salary record row
+      const { error: recordError } = await supabase
+        .from("salary_records")
+        .update({
+          employee_id: updated.employeeId,
+          year: updated.year,
+          month: updated.month,
+          base_salary: updated.baseSalary,
+          total_expenses: updated.totalExpenses,
+          grand_total: updated.grandTotal,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", updated.id)
+        .eq("user_id", userId);
+
+      if (recordError) {
+        console.error("Error updating salary record:", recordError.message);
+        return;
+      }
+
+      // 2. Replace all expenses for this record
+      const { error: deleteExpError } = await supabase
+        .from("salary_expenses")
+        .delete()
+        .eq("salary_record_id", updated.id)
+        .eq("user_id", userId);
+
+      if (deleteExpError) {
+        console.error(
+          "Error deleting old salary expenses:",
+          deleteExpError.message
+        );
+        return;
+      }
+
+      if (updated.expenses && updated.expenses.length > 0) {
+        const expensesPayload = updated.expenses.map((exp) => ({
+          id: exp.id,
+          salary_record_id: updated.id,
+          category: exp.category,
+          amount: exp.amount,
+          expense_date: exp.date || null,
+          user_id: userId,
+        }));
+
+        const { error: insertExpError } = await supabase
+          .from("salary_expenses")
+          .insert(expensesPayload);
+
+        if (insertExpError) {
+          console.error(
+            "Error inserting updated salary expenses:",
+            insertExpError.message
+          );
+          return;
+        }
+      }
+
+      // 3. Sync local state so UI updates immediately
+      setRecords((prev) =>
+        prev.map((r) => (r.id === updated.id ? updated : r))
+      );
+    } catch (err) {
+      console.error("Unexpected error updating salary record:", err);
+    }
+  };
 
   const [deletingRecord, setDeletingRecord] = useState<SalaryRecord | null>(
     null
@@ -362,7 +445,7 @@ export function EmployeeSpecificDetailPageClient() {
                     <TableHead>Salary</TableHead>
                     <TableHead>Expenses</TableHead>
                     <TableHead>Grand total</TableHead>
-                    <TableHead className="hidden md:table-cell">
+                    <TableHead className="table-cell">
                       Expenses detail
                     </TableHead>
                     <TableHead className="w-[90px] text-right">
@@ -389,7 +472,7 @@ export function EmployeeSpecificDetailPageClient() {
                       <TableCell className="align-top text-sm font-semibold">
                         ₹ {record.grandTotal.toLocaleString("en-IN")}
                       </TableCell>
-                      <TableCell className="hidden align-top text-xs text-muted-foreground md:table-cell">
+                      <TableCell className="align-top text-xs text-muted-foreground table-cell">
                         {record.expenses.length === 0 ? (
                           <span>No expenses</span>
                         ) : (
@@ -407,15 +490,19 @@ export function EmployeeSpecificDetailPageClient() {
                       <TableCell className="align-top text-right">
                         <div className="flex justify-end gap-2">
                           <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 rounded-lg text-[11px]"
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
                             onClick={() => {
-                              if (!employee) return;
-                              generateSalarySlipPdf({ employee, record });
+                              setEditRecord(record);
+                              setIsEditOpen(true);
                             }}
+                            aria-label={`Edit record ${formatMonthYear(
+                              record.month,
+                              record.year
+                            )}`}
                           >
-                            PDF
+                            <Pencil className="h-3 w-3" />
                           </Button>
 
                           <Button
@@ -425,6 +512,18 @@ export function EmployeeSpecificDetailPageClient() {
                             onClick={() => setDeletingRecord(record)}
                           >
                             <Trash2 className="h-3 w-3" />
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 rounded-lg text-[11px]"
+                            onClick={() => {
+                              if (!employee) return;
+                              generateSalarySlipPdf({ employee, record });
+                            }}
+                          >
+                            PDF
                           </Button>
                         </div>
                       </TableCell>
@@ -436,6 +535,18 @@ export function EmployeeSpecificDetailPageClient() {
           )}
         </Card>
       </section>
+
+      <EditSalaryRecordDialog
+        open={isEditOpen}
+        onOpenChange={(open) => {
+          setIsEditOpen(open);
+          if (!open) setEditRecord(null);
+        }}
+        record={editRecord}
+        employees={[employee]} // only this employee in this page
+        onSave={handleSaveRecord}
+      />
+
       <AlertDialog
         open={!!deletingRecord}
         onOpenChange={(open) => {

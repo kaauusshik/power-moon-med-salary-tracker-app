@@ -18,6 +18,8 @@ import { AddEmployeeDialog } from "@/components/employees/add-employee-dialog";
 import { EditEmployeeDialog } from "@/components/employees/edit-employee-dialog";
 import { DeleteEmployeeDialog } from "@/components/employees/delete-employee-dialog";
 import { AddSalaryRecordDialog } from "@/components/salary/add-salary-record-dialog";
+import { EditSalaryRecordDialog } from "@/components/salary/edit-salary-record-dialog";
+import { DeleteSalaryRecordDialog } from "@/components/salary/delete-salary-record-dialog";
 import { supabase } from "@/lib/supabase-client";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -44,6 +46,12 @@ export default function DashboardClient({
 
   const [deleteEmployee, setDeleteEmployee] = useState<Employee | null>(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+
+  const [editRecord, setEditRecord] = useState<SalaryRecord | null>(null);
+  const [isEditRecordOpen, setIsEditRecordOpen] = useState(false);
+
+  const [deleteRecord, setDeleteRecord] = useState<SalaryRecord | null>(null);
+  const [isDeleteRecordOpen, setIsDeleteRecordOpen] = useState(false);
 
   const [records, setRecords] = useState<SalaryRecord[]>([]);
   const [isRecordOpen, setIsRecordOpen] = useState(false);
@@ -224,6 +232,124 @@ export default function DashboardClient({
     ];
     const label = monthNames[month - 1] ?? String(month);
     return `${label} ${year}`;
+  };
+
+  const openEditRecordDialog = (record: SalaryRecord) => {
+    setEditRecord(record);
+    setIsEditRecordOpen(true);
+  };
+
+  const openDeleteRecordDialog = (record: SalaryRecord) => {
+    setDeleteRecord(record);
+    setIsDeleteRecordOpen(true);
+  };
+
+  const handleEditRecordOpenChange = (open: boolean) => {
+    setIsEditRecordOpen(open);
+    if (!open) setEditRecord(null);
+  };
+
+  const handleDeleteRecordOpenChange = (open: boolean) => {
+    setIsDeleteRecordOpen(open);
+    if (!open) setDeleteRecord(null);
+  };
+
+  const handleSaveRecord = async (updated: SalaryRecord) => {
+    if (!userId) return;
+
+    // 1. Update the main salary record row
+    const { error: recordError } = await supabase
+      .from("salary_records")
+      .update({
+        employee_id: updated.employeeId,
+        year: updated.year,
+        month: updated.month,
+        base_salary: updated.baseSalary,
+        total_expenses: updated.totalExpenses,
+        grand_total: updated.grandTotal,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", updated.id)
+      .eq("user_id", userId); // optional but safer
+
+    if (recordError) {
+      console.error("Error updating salary record:", recordError.message);
+      return;
+    }
+
+    // 2. Replace existing expenses for this record
+    const { error: deleteExpError } = await supabase
+      .from("salary_expenses")
+      .delete()
+      .eq("salary_record_id", updated.id)
+      .eq("user_id", userId);
+
+    if (deleteExpError) {
+      console.error(
+        "Error deleting old salary expenses:",
+        deleteExpError.message
+      );
+      return;
+    }
+
+    if (updated.expenses && updated.expenses.length > 0) {
+      const expensesPayload = updated.expenses.map((exp) => ({
+        id: exp.id,
+        salary_record_id: updated.id,
+        category: exp.category,
+        amount: exp.amount,
+        expense_date: exp.date || null,
+        user_id: userId,
+      }));
+
+      const { error: insertExpError } = await supabase
+        .from("salary_expenses")
+        .insert(expensesPayload);
+
+      if (insertExpError) {
+        console.error(
+          "Error inserting updated salary expenses:",
+          insertExpError.message
+        );
+        return;
+      }
+    }
+
+    // 3. Sync local React state
+    setRecords((prev) =>
+      prev.map((rec) => (rec.id === updated.id ? updated : rec))
+    );
+  };
+
+  const handleConfirmDeleteRecord = async (id: string) => {
+    if (!userId) return;
+
+    // First delete expenses for this record
+    const { error: expError } = await supabase
+      .from("salary_expenses")
+      .delete()
+      .eq("salary_record_id", id)
+      .eq("user_id", userId);
+
+    if (expError) {
+      console.error("Error deleting salary expenses:", expError.message);
+      return;
+    }
+
+    // Then delete the salary record itself
+    const { error: recError } = await supabase
+      .from("salary_records")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", userId);
+
+    if (recError) {
+      console.error("Error deleting salary record:", recError.message);
+      return;
+    }
+
+    // Remove from local state
+    setRecords((prev) => prev.filter((rec) => rec.id !== id));
   };
 
   // effect for loading employees from supabase
@@ -760,6 +886,26 @@ export default function DashboardClient({
                         Grand total: ₹{" "}
                         {record.grandTotal.toLocaleString("en-IN")}
                       </div>
+
+                      <div className="mt-2 flex gap-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={() => openEditRecordDialog(record)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-red-500 hover:text-red-500"
+                          onClick={() => openDeleteRecordDialog(record)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   </li>
                 ))}
@@ -812,6 +958,21 @@ export default function DashboardClient({
         onOpenChange={setIsRecordOpen}
         employees={employees}
         onAdd={handleAddRecord}
+      />
+
+      <EditSalaryRecordDialog
+        open={isEditRecordOpen}
+        onOpenChange={handleEditRecordOpenChange}
+        record={editRecord}
+        employees={employees}
+        onSave={handleSaveRecord}
+      />
+
+      <DeleteSalaryRecordDialog
+        open={isDeleteRecordOpen}
+        onOpenChange={handleDeleteRecordOpenChange}
+        record={deleteRecord}
+        onConfirmDelete={handleConfirmDeleteRecord}
       />
     </main>
   );
