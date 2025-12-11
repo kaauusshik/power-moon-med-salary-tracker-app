@@ -34,11 +34,13 @@ import { Trash2 } from "lucide-react";
 
 const recordSchema = z.object({
   employeeId: z.string().min(1, "Employee is required"),
-  month: z.string().min(1, "Month is required"),
-  year: z
+  date: z
     .string()
-    .min(4, "Year is required")
-    .refine((val) => !Number.isNaN(Number(val)), "Year must be a number"),
+    .min(10, "Date is required")
+    .refine((val) => {
+      // basic check for YYYY-MM-DD from input[type=date]
+      return /^\d{4}-\d{2}-\d{2}$/.test(val);
+    }, "Invalid date"),
   salary: z
     .string()
     .optional()
@@ -47,7 +49,6 @@ const recordSchema = z.object({
       "Must be a valid non-negative number"
     ),
 });
-
 type RecordFormValues = z.infer<typeof recordSchema>;
 
 interface EditSalaryRecordDialogProps {
@@ -57,21 +58,6 @@ interface EditSalaryRecordDialogProps {
   record: SalaryRecord | null;
   onSave: (record: SalaryRecord) => Promise<void> | void;
 }
-
-const MONTHS = [
-  { label: "January", value: 1 },
-  { label: "February", value: 2 },
-  { label: "March", value: 3 },
-  { label: "April", value: 4 },
-  { label: "May", value: 5 },
-  { label: "June", value: 6 },
-  { label: "July", value: 7 },
-  { label: "August", value: 8 },
-  { label: "September", value: 9 },
-  { label: "October", value: 10 },
-  { label: "November", value: 11 },
-  { label: "December", value: 12 },
-];
 
 type ExpenseDraft = {
   id: string;
@@ -91,8 +77,7 @@ export function EditSalaryRecordDialog({
     resolver: zodResolver(recordSchema),
     defaultValues: {
       employeeId: "",
-      month: "",
-      year: "",
+      date: new Date().toISOString().slice(0, 10),
       salary: "",
     },
   });
@@ -105,13 +90,14 @@ export function EditSalaryRecordDialog({
   });
   const [expenses, setExpenses] = React.useState<ExpenseDraft[]>([]);
 
-  // When opening with a record, pre-fill the form + expenses
+  // pre-fill when opening
   React.useEffect(() => {
     if (open && record) {
       form.reset({
         employeeId: record.employeeId,
-        month: String(record.month),
-        year: String(record.year),
+        date: record.date
+          ? String(record.date).slice(0, 10)
+          : new Date().toISOString().slice(0, 10),
         salary:
           typeof record.baseSalary === "number"
             ? String(record.baseSalary)
@@ -131,13 +117,19 @@ export function EditSalaryRecordDialog({
     }
 
     if (!open) {
-      // optional: clear when closed
+      // clear when closed
       setExpenseDraft({ id: "", category: "", amount: "", date: "" });
+      setExpenses([]);
+      form.reset({
+        employeeId: "",
+        date: new Date().toISOString().slice(0, 10),
+        salary: "",
+      });
     }
   }, [open, record, form]);
 
   if (!record) {
-    // No record selected yet, don't render form
+    // When no record is provided, show the dialog shell only
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-lg">
@@ -188,6 +180,11 @@ export function EditSalaryRecordDialog({
         ? Number(values.salary)
         : null;
 
+    // derive month/year from date
+    const dateObj = new Date(values.date);
+    const monthNumber = dateObj.getMonth() + 1;
+    const yearNumber = dateObj.getFullYear();
+
     const normalizedExpenses: SalaryExpense[] = expenses
       .map((e) => {
         const amt = Number(e.amount);
@@ -206,18 +203,16 @@ export function EditSalaryRecordDialog({
       0
     );
 
-    const monthObj = MONTHS.find((m) => String(m.value) === values.month);
-    const monthNumber = monthObj ? monthObj.value : 1;
-
     const updatedRecord: SalaryRecord = {
-      id: record.id, // keep same id
+      id: record.id, // keep existing id
       employeeId: values.employeeId,
-      year: Number(values.year),
+      year: yearNumber,
       month: monthNumber,
       baseSalary,
       expenses: normalizedExpenses,
       totalExpenses,
       grandTotal: (baseSalary ?? 0) + totalExpenses,
+      date: values.date, // ISO YYYY-MM-DD
     };
 
     onSave(updatedRecord);
@@ -230,7 +225,7 @@ export function EditSalaryRecordDialog({
         <DialogHeader>
           <DialogTitle>Edit salary record</DialogTitle>
           <DialogDescription>
-            Update salary and expenses for this employee and month.
+            Update salary and expenses for this record.
           </DialogDescription>
         </DialogHeader>
 
@@ -239,7 +234,7 @@ export function EditSalaryRecordDialog({
             onSubmit={form.handleSubmit(handleSubmit)}
             className="space-y-6"
           >
-            {/* Employee + period */}
+            {/* Employee + date + salary */}
             <div className="space-y-4">
               <FormField
                 control={form.control}
@@ -273,26 +268,12 @@ export function EditSalaryRecordDialog({
               <div className="grid grid-cols-2 gap-3">
                 <FormField
                   control={form.control}
-                  name="month"
+                  name="date"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Month</FormLabel>
+                      <FormLabel>Date</FormLabel>
                       <FormControl>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Month" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {MONTHS.map((m) => (
-                              <SelectItem key={m.value} value={String(m.value)}>
-                                {m.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Input type="date" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -301,37 +282,23 @@ export function EditSalaryRecordDialog({
 
                 <FormField
                   control={form.control}
-                  name="year"
+                  name="salary"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Year</FormLabel>
+                      <FormLabel>Salary</FormLabel>
                       <FormControl>
-                        <Input type="number" inputMode="numeric" {...field} />
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="Enter salary amount"
+                          {...field}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
               </div>
-
-              <FormField
-                control={form.control}
-                name="salary"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Salary</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        placeholder="Enter salary amount"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
             </div>
 
             {/* Expenses */}

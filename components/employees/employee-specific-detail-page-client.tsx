@@ -37,6 +37,46 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 
+const PAD2 = (n: number) => String(n).padStart(2, "0");
+
+function formatDateDDMMYYYY(isoDate?: string | null) {
+  if (!isoDate) return "";
+  const d = new Date(isoDate);
+  const dd = PAD2(d.getDate());
+  const mm = PAD2(d.getMonth() + 1);
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`; // e.g. 03/12/2025
+}
+
+function ordinal(n: number) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatPretty(isoDate?: string | null) {
+  if (!isoDate) return "";
+  const d = new Date(isoDate);
+  const day = d.getDate();
+  const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const mon = monthNames[d.getMonth()];
+  const year = d.getFullYear();
+  return `${ordinal(day)} ${mon} ${year}`; // e.g. "3rd Dec 2025"
+}
+
 export function EmployeeSpecificDetailPageClient() {
   const router = useRouter();
   const pathname = usePathname();
@@ -77,6 +117,7 @@ export function EmployeeSpecificDetailPageClient() {
           base_salary: updated.baseSalary,
           total_expenses: updated.totalExpenses,
           grand_total: updated.grandTotal,
+          salary_date: updated.date ?? null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", updated.id)
@@ -286,6 +327,7 @@ export function EmployeeSpecificDetailPageClient() {
         baseSalary: row.base_salary,
         totalExpenses: row.total_expenses,
         grandTotal: row.grand_total,
+        date: row.salary_date ? row.salary_date.slice(0, 10) : null,
         expenses: expensesByRecord[row.id] ?? [],
       }));
 
@@ -460,7 +502,14 @@ export function EmployeeSpecificDetailPageClient() {
                       <TableCell className="align-top text-sm font-medium">
                         <div className="flex items-center gap-2">
                           <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                          {formatMonthYear(record.month, record.year)}
+                          <div>
+                            <div className="font-medium">
+                              {formatPretty(record.date)}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {formatDateDDMMYYYY(record.date)}
+                            </div>
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell className="align-top text-sm">
@@ -481,7 +530,9 @@ export function EmployeeSpecificDetailPageClient() {
                               <li key={exp.id}>
                                 {exp.category} – ₹{" "}
                                 {exp.amount.toLocaleString("en-IN")}
-                                {exp.date ? ` • ${exp.date}` : ""}
+                                {exp.date
+                                  ? ` • ${formatDateDDMMYYYY(exp.date)}`
+                                  : ""}
                               </li>
                             ))}
                           </ul>

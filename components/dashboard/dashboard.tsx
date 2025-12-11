@@ -4,6 +4,13 @@ import { useState, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import Link from "next/link";
 import {
   LogOut,
@@ -12,6 +19,8 @@ import {
   Trash2,
   ArrowRight,
   ReceiptIndianRupee,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import type { Employee, SalaryRecord, SalaryExpense } from "@/lib/types";
 import { AddEmployeeDialog } from "@/components/employees/add-employee-dialog";
@@ -20,6 +29,10 @@ import { DeleteEmployeeDialog } from "@/components/employees/delete-employee-dia
 import { AddSalaryRecordDialog } from "@/components/salary/add-salary-record-dialog";
 import { EditSalaryRecordDialog } from "@/components/salary/edit-salary-record-dialog";
 import { DeleteSalaryRecordDialog } from "@/components/salary/delete-salary-record-dialog";
+import { AddOtherExpenseDialog } from "@/components/expenses/add-other-expenses-dialog";
+import { EditOtherExpenseDialog } from "@/components/expenses/edit-other-expenses-dialog";
+import { DeleteOtherExpenseDialog } from "@/components/expenses/delete-other-expenses-dialog";
+import type { OtherExpense } from "@/lib/types";
 import { supabase } from "@/lib/supabase-client";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -29,6 +42,46 @@ type DashboardClientProps = {
   initialUserEmail?: string;
 };
 
+const PAD2 = (n: number) => String(n).padStart(2, "0");
+
+function formatDateDDMMYYYY(isoDate?: string | null) {
+  if (!isoDate) return "";
+  const d = new Date(isoDate);
+  const dd = PAD2(d.getDate());
+  const mm = PAD2(d.getMonth() + 1);
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`; // e.g. 03/12/2025
+}
+
+function ordinal(n: number) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatPretty(isoDate?: string | null) {
+  if (!isoDate) return "";
+  const d = new Date(isoDate);
+  const day = d.getDate();
+  const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const mon = monthNames[d.getMonth()];
+  const year = d.getFullYear();
+  return `${ordinal(day)} ${mon} ${year}`; // e.g. "3rd Dec 2025"
+}
+
 export default function DashboardClient({
   initialUserEmail,
 }: DashboardClientProps) {
@@ -37,6 +90,20 @@ export default function DashboardClient({
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+
+  const [openMonths, setOpenMonths] = useState<Record<string, boolean>>(
+    () => ({})
+  );
+
+  const [otherExpenses, setOtherExpenses] = useState<OtherExpense[]>([]);
+  const [isOtherExpenseOpen, setIsOtherExpenseOpen] = useState(false);
+  const [visibleExpenseGroups, setVisibleExpenseGroups] = useState(10);
+
+  const [editingOther, setEditingOther] = useState<OtherExpense | null>(null);
+  const [isEditOtherOpen, setIsEditOtherOpen] = useState(false);
+
+  const [deleteOther, setDeleteOther] = useState<OtherExpense | null>(null);
+  const [isDeleteOtherOpen, setIsDeleteOtherOpen] = useState(false);
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -53,10 +120,25 @@ export default function DashboardClient({
   const [deleteRecord, setDeleteRecord] = useState<SalaryRecord | null>(null);
   const [isDeleteRecordOpen, setIsDeleteRecordOpen] = useState(false);
 
+  // paging config
+  const PAGE_SIZE = 20;
+
+  // Salary Records paging state
+  const [recordsPage, setRecordsPage] = useState(0); // zero-based
+  const [recordsHasMore, setRecordsHasMore] = useState(true);
+  const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
+
+  // Other expenses paging state
+  const [otherPage, setOtherPage] = useState(0);
+  const [otherHasMore, setOtherHasMore] = useState(true);
+  const [otherLoadingMore, setOtherLoadingMore] = useState(false);
+
   const [records, setRecords] = useState<SalaryRecord[]>([]);
   const [isRecordOpen, setIsRecordOpen] = useState(false);
 
   const hasEmployees = employees.length > 0;
+
+  const [isSwitching, setIsSwitching] = useState(false);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -74,7 +156,7 @@ export default function DashboardClient({
         name: employee.name,
         role: employee.role ?? null,
         base_salary: employee.baseSalary ?? null,
-        user_id: userId, // 👈 important
+        user_id: userId,
       })
       .select()
       .single();
@@ -113,7 +195,6 @@ export default function DashboardClient({
       return;
     }
 
-    // keep local state in sync with whatever DB has
     setEmployees((prev) =>
       prev.map((emp) =>
         emp.id === data.id
@@ -140,6 +221,96 @@ export default function DashboardClient({
     setRecords((prev) => prev.filter((rec) => rec.employeeId !== id));
   };
 
+  const handleAddOtherExpense = async (expense: {
+    id: string;
+    category: string;
+    amount: number;
+    date?: string | null;
+    description?: string | null;
+  }) => {
+    if (!userId) return;
+
+    const { error } = await supabase.from("other_expenses").insert({
+      id: expense.id,
+      user_id: userId,
+      category: expense.category,
+      amount: expense.amount,
+      expense_date: expense.date ?? null,
+      description: expense.description ?? null,
+    });
+
+    if (error) {
+      console.error("Error inserting other expense:", error.message);
+      return;
+    }
+
+    // keep client state in sync
+    setOtherExpenses((prev) => [
+      ...prev,
+      {
+        id: expense.id,
+        userId,
+        category: expense.category,
+        amount: expense.amount,
+        date: expense.date ?? null,
+        description: expense.description ?? null,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  };
+
+  const openEditOtherDialog = (oe: OtherExpense) => {
+    setEditingOther(oe);
+    setIsEditOtherOpen(true);
+  };
+
+  const openDeleteOtherDialog = (oe: OtherExpense) => {
+    setDeleteOther(oe);
+    setIsDeleteOtherOpen(true);
+  };
+
+  const handleSaveOther = async (updated: OtherExpense) => {
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("other_expenses")
+      .update({
+        category: updated.category,
+        amount: updated.amount,
+        expense_date: updated.date ?? null,
+        description: updated.description ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", updated.id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Error updating other expense:", error.message);
+      return;
+    }
+
+    setOtherExpenses((prev) =>
+      prev.map((o) => (o.id === updated.id ? updated : o))
+    );
+  };
+
+  const handleConfirmDeleteOther = async (id: string) => {
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("other_expenses")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Error deleting other expense:", error.message);
+      return;
+    }
+
+    setOtherExpenses((prev) => prev.filter((o) => o.id !== id));
+  };
+
   const handleAddRecord = async (record: SalaryRecord) => {
     if (!userId) return;
 
@@ -153,7 +324,8 @@ export default function DashboardClient({
         base_salary: record.baseSalary,
         total_expenses: record.totalExpenses,
         grand_total: record.grandTotal,
-        user_id: userId, // 👈 tie to user
+        user_id: userId,
+        salary_date: record.date ?? null,
       });
 
     if (recordError) {
@@ -168,7 +340,7 @@ export default function DashboardClient({
         category: exp.category,
         amount: exp.amount,
         expense_date: exp.date || null,
-        user_id: userId, // 👈 also set here
+        user_id: userId,
       }));
 
       const { error: expError } = await supabase
@@ -257,7 +429,6 @@ export default function DashboardClient({
   const handleSaveRecord = async (updated: SalaryRecord) => {
     if (!userId) return;
 
-    // 1. Update the main salary record row
     const { error: recordError } = await supabase
       .from("salary_records")
       .update({
@@ -267,17 +438,17 @@ export default function DashboardClient({
         base_salary: updated.baseSalary,
         total_expenses: updated.totalExpenses,
         grand_total: updated.grandTotal,
+        salary_date: updated.date ?? null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", updated.id)
-      .eq("user_id", userId); // optional but safer
+      .eq("user_id", userId);
 
     if (recordError) {
       console.error("Error updating salary record:", recordError.message);
       return;
     }
 
-    // 2. Replace existing expenses for this record
     const { error: deleteExpError } = await supabase
       .from("salary_expenses")
       .delete()
@@ -315,7 +486,6 @@ export default function DashboardClient({
       }
     }
 
-    // 3. Sync local React state
     setRecords((prev) =>
       prev.map((rec) => (rec.id === updated.id ? updated : rec))
     );
@@ -324,7 +494,6 @@ export default function DashboardClient({
   const handleConfirmDeleteRecord = async (id: string) => {
     if (!userId) return;
 
-    // First delete expenses for this record
     const { error: expError } = await supabase
       .from("salary_expenses")
       .delete()
@@ -336,7 +505,6 @@ export default function DashboardClient({
       return;
     }
 
-    // Then delete the salary record itself
     const { error: recError } = await supabase
       .from("salary_records")
       .delete()
@@ -348,11 +516,88 @@ export default function DashboardClient({
       return;
     }
 
-    // Remove from local state
     setRecords((prev) => prev.filter((rec) => rec.id !== id));
   };
 
-  // effect for loading employees from supabase
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const yearOptions = Array.from(
+    { length: 6 },
+    (_, i) => currentYear - (5 - i)
+  );
+
+  // filtered lists based on selectedYear
+  const filteredRecords = useMemo(
+    () => records.filter((r) => r.year === selectedYear),
+    [records, selectedYear]
+  );
+
+  const filteredOtherExpenses = useMemo(
+    () =>
+      otherExpenses.filter((oe) => {
+        const dStr = oe.date ?? oe.createdAt ?? null;
+        const year = dStr ? new Date(dStr).getFullYear() : selectedYear;
+        return year === selectedYear;
+      }),
+    [otherExpenses, selectedYear]
+  );
+
+  // grouped other expenses for UI (now uses filteredOtherExpenses)
+  const groupedOtherExpenses = useMemo(() => {
+    const groups: Record<
+      string,
+      {
+        label: string;
+        items: OtherExpense[];
+        total: number;
+        year: number;
+        month: number;
+      }
+    > = {};
+
+    for (const oe of filteredOtherExpenses) {
+      const dateStr = oe.date ?? oe.createdAt ?? null;
+      const d = dateStr ? new Date(dateStr) : new Date();
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1;
+      const key = `${year}-${String(month).padStart(2, "0")}`;
+
+      if (!groups[key]) {
+        const monNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+        groups[key] = {
+          label: `${monNames[month - 1]} ${year}`,
+          items: [],
+          total: 0,
+          year,
+          month,
+        };
+      }
+
+      groups[key].items.push(oe);
+      groups[key].total += oe.amount;
+    }
+
+    return Object.entries(groups)
+      .map(([key, val]) => ({ key, ...val }))
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      });
+  }, [filteredOtherExpenses]);
+
   useEffect(() => {
     if (!userId) return;
 
@@ -360,7 +605,7 @@ export default function DashboardClient({
       const { data, error } = await supabase
         .from("employees")
         .select("*")
-        .eq("user_id", userId) // 👈 filter by user
+        .eq("user_id", userId)
         .order("created_at", { ascending: true });
 
       if (error) {
@@ -383,43 +628,46 @@ export default function DashboardClient({
     loadEmployees();
   }, [userId]);
 
-  // effect for loading salary records from supabase
   useEffect(() => {
     if (!userId) return;
 
-    const loadRecords = async () => {
+    const loadRecordsPage = async (page = 0) => {
+      const start = page * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1; // inclusive
+
       const { data: recordsData, error: recordsError } = await supabase
         .from("salary_records")
         .select("*")
-        .eq("user_id", userId) // filter by user
-        .order("created_at", { ascending: true });
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .range(start, end);
 
       if (recordsError) {
         console.error("Error fetching salary records:", recordsError.message);
-        return;
+        return { rows: [], count: 0 };
       }
 
       const recordRows = recordsData ?? [];
+      // fetch expenses only for the returned record ids
       const recordIds = recordRows.map((r) => r.id);
-
-      // only fetch expenses for these records
-      const { data: expensesData, error: expensesError } = await supabase
-        .from("salary_expenses")
-        .select("*")
-        .in("salary_record_id", recordIds);
-
-      if (expensesError) {
-        console.error("Error fetching salary expenses:", expensesError.message);
-        return;
+      let expensesData = [];
+      if (recordIds.length > 0) {
+        const { data: eData, error: eErr } = await supabase
+          .from("salary_expenses")
+          .select("*")
+          .in("salary_record_id", recordIds);
+        if (eErr) {
+          console.error("Error fetching salary expenses:", eErr.message);
+        } else {
+          expensesData = eData ?? [];
+        }
       }
 
-      // Group expenses by salary_record_id
+      // group and normalize (same as before)
       const expensesByRecord: Record<string, SalaryExpense[]> = {};
       (expensesData ?? []).forEach((row) => {
         const recId = row.salary_record_id as string;
-        if (!expensesByRecord[recId]) {
-          expensesByRecord[recId] = [];
-        }
+        if (!expensesByRecord[recId]) expensesByRecord[recId] = [];
         expensesByRecord[recId].push({
           id: row.id,
           category: row.category,
@@ -428,7 +676,6 @@ export default function DashboardClient({
         });
       });
 
-      // Build our SalaryRecord[]
       const normalized: SalaryRecord[] = recordRows.map((row) => ({
         id: row.id,
         employeeId: row.employee_id,
@@ -437,13 +684,169 @@ export default function DashboardClient({
         baseSalary: row.base_salary,
         totalExpenses: row.total_expenses,
         grandTotal: row.grand_total,
+        date: row.salary_date ? String(row.salary_date).slice(0, 10) : null,
         expenses: expensesByRecord[row.id] ?? [],
       }));
 
-      setRecords(normalized);
+      return { rows: normalized, fetched: normalized.length };
     };
 
-    loadRecords();
+    // initial load (page 0)
+    (async () => {
+      const { rows, fetched } = await loadRecordsPage(0);
+      setRecords(rows);
+      setRecordsPage(0);
+      setRecordsHasMore(fetched === PAGE_SIZE);
+    })();
+  }, [userId]);
+
+  const loadMoreRecords = async () => {
+    if (!userId || recordsLoadingMore || !recordsHasMore) return;
+    setRecordsLoadingMore(true);
+    const nextPage = recordsPage + 1;
+    const start = nextPage * PAGE_SIZE;
+    const end = start + PAGE_SIZE - 1;
+
+    try {
+      const { data: recordsData, error: recordsError } = await supabase
+        .from("salary_records")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .range(start, end);
+
+      if (recordsError) {
+        console.error(
+          "Error fetching more salary records:",
+          recordsError.message
+        );
+        return;
+      }
+
+      const recordRows = recordsData ?? [];
+      // fetch and attach expenses similar to above
+      const recordIds = recordRows.map((r) => r.id);
+      let expensesData = [];
+      if (recordIds.length > 0) {
+        const { data: eData, error: eErr } = await supabase
+          .from("salary_expenses")
+          .select("*")
+          .in("salary_record_id", recordIds);
+        if (eErr)
+          console.error("Error fetching salary expenses:", eErr.message);
+        else expensesData = eData ?? [];
+      }
+
+      const expensesByRecord: Record<string, SalaryExpense[]> = {};
+      (expensesData ?? []).forEach((row) => {
+        const recId = row.salary_record_id as string;
+        if (!expensesByRecord[recId]) expensesByRecord[recId] = [];
+        expensesByRecord[recId].push({
+          id: row.id,
+          category: row.category,
+          amount: row.amount,
+          date: row.expense_date ?? "",
+        });
+      });
+
+      const normalized: SalaryRecord[] = recordRows.map((row) => ({
+        id: row.id,
+        employeeId: row.employee_id,
+        year: row.year,
+        month: row.month,
+        baseSalary: row.base_salary,
+        totalExpenses: row.total_expenses,
+        grandTotal: row.grand_total,
+        date: row.salary_date ? String(row.salary_date).slice(0, 10) : null,
+        expenses: expensesByRecord[row.id] ?? [],
+      }));
+
+      setRecords((prev) => [...prev, ...normalized]);
+      setRecordsPage(nextPage);
+      setRecordsHasMore(normalized.length === PAGE_SIZE);
+    } finally {
+      setRecordsLoadingMore(false);
+    }
+  };
+
+  // loadOther Records hook
+  useEffect(() => {
+    if (!userId) return;
+
+    const loadOtherPage = async (page = 0) => {
+      const start = page * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1;
+
+      const { data, error } = await supabase
+        .from("other_expenses")
+        .select("*")
+        .eq("user_id", userId)
+        .order("expense_date", { ascending: false })
+        .range(start, end);
+
+      if (error) {
+        console.error("Error loading other expenses:", error.message);
+        return { rows: [] };
+      }
+
+      return {
+        rows: (data ?? []).map((r: any) => ({
+          id: r.id,
+          userId: r.user_id,
+          category: r.category,
+          amount: Number(r.amount),
+          date: r.expense_date ? String(r.expense_date).slice(0, 10) : null,
+          description: r.description ?? null,
+          createdAt: r.created_at ?? null,
+        })),
+        fetched: (data ?? []).length,
+      };
+    };
+
+    const loadMoreOtherExpenses = async () => {
+      if (!userId || otherLoadingMore || !otherHasMore) return;
+      setOtherLoadingMore(true);
+      const nextPage = otherPage + 1;
+      const start = nextPage * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1;
+
+      try {
+        const { data, error } = await supabase
+          .from("other_expenses")
+          .select("*")
+          .eq("user_id", userId)
+          .order("expense_date", { ascending: false })
+          .range(start, end);
+
+        if (error) {
+          console.error("Error loading more other expenses:", error.message);
+          return;
+        }
+
+        const rows = (data ?? []).map((r: any) => ({
+          id: r.id,
+          userId: r.user_id,
+          category: r.category,
+          amount: Number(r.amount),
+          date: r.expense_date ? String(r.expense_date).slice(0, 10) : null,
+          description: r.description ?? null,
+          createdAt: r.created_at ?? null,
+        }));
+
+        setOtherExpenses((prev) => [...prev, ...rows]);
+        setOtherPage(nextPage);
+        setOtherHasMore(rows.length === PAGE_SIZE);
+      } finally {
+        setOtherLoadingMore(false);
+      }
+    };
+
+    (async () => {
+      const { rows, fetched } = await loadOtherPage(0);
+      setOtherExpenses(rows);
+      setOtherPage(0);
+      setOtherHasMore(fetched === PAGE_SIZE);
+    })();
   }, [userId]);
 
   // effect for checking auth state
@@ -458,31 +861,45 @@ export default function DashboardClient({
       }
 
       setUserEmail(data.session.user.email ?? null);
-      setUserId(data.session.user.id); // 👈 store user id
+      setUserId(data.session.user.id);
       setAuthChecked(true);
     };
 
     checkAuth();
   }, [router]);
 
-  const currentYear = new Date().getFullYear();
-
   const {
     totalSalaryThisYear,
     totalExpensesThisYear,
+    totalOtherExpensesThisYear,
     monthlyChartData,
     topEmployees,
   } = useMemo(() => {
     let salaryYear = 0;
     let expensesYear = 0;
+    let otherExpensesYear = 0;
 
     const monthlyTotals: Record<string, number> = {};
     const perEmployeeTotals: Record<string, number> = {};
 
+    for (const oe of otherExpenses) {
+      if (!oe) continue;
+      const expYear = oe.date ? new Date(oe.date).getFullYear() : selectedYear;
+      if (expYear === selectedYear) {
+        otherExpensesYear += oe.amount;
+        expensesYear += oe.amount;
+        if (oe.date) {
+          const m = String(new Date(oe.date).getMonth() + 1).padStart(2, "0");
+          const key = `${expYear}-${m}`;
+          monthlyTotals[key] = (monthlyTotals[key] ?? 0) + oe.amount;
+        }
+      }
+    }
+
     for (const rec of records) {
       const base = rec.baseSalary ?? 0;
 
-      if (rec.year === currentYear) {
+      if (rec.year === selectedYear) {
         salaryYear += base;
         expensesYear += rec.totalExpenses;
 
@@ -511,7 +928,7 @@ export default function DashboardClient({
 
     const monthlyChartData = Array.from({ length: 12 }, (_, idx) => {
       const month = idx + 1;
-      const key = `${currentYear}-${String(month).padStart(2, "0")}`;
+      const key = `${selectedYear}-${String(month).padStart(2, "0")}`;
       return {
         label: monthNames[idx],
         total: monthlyTotals[key] ?? 0,
@@ -533,10 +950,18 @@ export default function DashboardClient({
     return {
       totalSalaryThisYear: salaryYear,
       totalExpensesThisYear: expensesYear,
+      totalOtherExpensesThisYear: otherExpensesYear,
       monthlyChartData,
       topEmployees,
     };
-  }, [records, employees, currentYear]);
+  }, [records, employees, selectedYear, otherExpenses]);
+
+  // small animation trigger when switching years
+  useEffect(() => {
+    setIsSwitching(true);
+    const t = setTimeout(() => setIsSwitching(false), 220);
+    return () => clearTimeout(t);
+  }, [selectedYear]);
 
   if (!authChecked) {
     return (
@@ -590,12 +1015,36 @@ export default function DashboardClient({
                 Track monthly salaries and expenses for your employees.
               </p>
             </div>
-            <div className="flex gap-2 text-xs text-muted-foreground">
-              <div className="rounded-md border border-border/60 px-2 py-1">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="rounded-md border border-border/60 px-2 py-3">
                 Employees: {employees.length}
               </div>
-              <div className="rounded-md border border-border/60 px-2 py-1">
-                Records this month: {records.length}
+
+              <div className="rounded-md border border-border/60 px-2 py-3">
+                Current Year Records: {filteredRecords.length}
+              </div>
+
+              {/* Year Selector (shadcn Select) */}
+              <div className="rounded-md px-2 flex items-center gap-2">
+                <span className="hidden md:inline text-xs text-muted-foreground">
+                  Year
+                </span>
+
+                <Select
+                  value={String(selectedYear)}
+                  onValueChange={(val) => setSelectedYear(Number(val))}
+                >
+                  <SelectTrigger className="h-8 w-[80px] rounded-md px-2 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {yearOptions.map((y) => (
+                      <SelectItem key={y} value={String(y)}>
+                        {y}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
@@ -605,10 +1054,17 @@ export default function DashboardClient({
         <Card className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-sm">
           <div className="grid gap-6 md:grid-cols-2">
             {/* Monthly spend chart */}
-            <div>
+            <div
+              className={`${
+                isSwitching
+                  ? "opacity-70 scale-95 transition-all duration-200"
+                  : "opacity-100 transition-all duration-300"
+              }`}
+            >
               <div className="mb-3 text-sm font-medium">
-                Monthly spend ({currentYear})
+                Monthly spend ({selectedYear})
               </div>
+
               <div className="space-y-1">
                 {(() => {
                   const maxTotal = Math.max(
@@ -624,7 +1080,7 @@ export default function DashboardClient({
                       <div className="w-8 text-muted-foreground">{m.label}</div>
                       <div className="flex-1 rounded-full bg-muted/60 h-2 overflow-hidden">
                         <div
-                          className="h-full bg-primary"
+                          className="h-full bg-primary transition-all duration-500"
                           style={{
                             width:
                               maxTotal > 0
@@ -643,7 +1099,13 @@ export default function DashboardClient({
             </div>
 
             {/* Top employees */}
-            <div>
+            <div
+              className={`${
+                isSwitching
+                  ? "opacity-70 scale-95 transition-all duration-200"
+                  : "opacity-100 transition-all duration-300"
+              }`}
+            >
               <div className="mb-3 text-sm font-medium">
                 Top employees by payout
               </div>
@@ -668,8 +1130,23 @@ export default function DashboardClient({
                           </div>
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        ₹ {emp.total.toLocaleString("en-IN")}
+
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          ₹ {emp.total.toLocaleString("en-IN")}
+                        </div>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 rounded-lg text-xs"
+                          asChild
+                        >
+                          <Link href={`/employees/${emp.id}`}>
+                            View
+                            <ArrowRight className="ml-1 h-3 w-3" />
+                          </Link>
+                        </Button>
                       </div>
                     </li>
                   ))}
@@ -680,10 +1157,10 @@ export default function DashboardClient({
         </Card>
 
         {/* Stats summary */}
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
           <Card className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
             <div className="text-[11px] font-medium text-muted-foreground">
-              Total salary paid ({currentYear})
+              Total salary paid ({selectedYear})
             </div>
             <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
               ₹ {totalSalaryThisYear.toLocaleString("en-IN")}
@@ -692,7 +1169,7 @@ export default function DashboardClient({
 
           <Card className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
             <div className="text-[11px] font-medium text-muted-foreground">
-              Total expenses reimbursed ({currentYear})
+              Total employee expense reimbursed ({selectedYear})
             </div>
             <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
               ₹ {totalExpensesThisYear.toLocaleString("en-IN")}
@@ -701,7 +1178,19 @@ export default function DashboardClient({
 
           <Card className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
             <div className="text-[11px] font-medium text-muted-foreground">
-              Net payout ({currentYear})
+              Total other expenses ({selectedYear})
+            </div>
+            <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
+              ₹{" "}
+              {filteredOtherExpenses
+                .reduce((s, e) => s + e.amount, 0)
+                .toLocaleString("en-IN")}
+            </div>
+          </Card>
+
+          <Card className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
+            <div className="text-[11px] font-medium text-muted-foreground">
+              Net payout ({selectedYear})
             </div>
             <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
               ₹{" "}
@@ -713,7 +1202,7 @@ export default function DashboardClient({
         </div>
 
         {/* Actions */}
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-3">
           <Button
             className="h-11 justify-center rounded-xl text-sm font-medium"
             onClick={openAddDialog}
@@ -728,6 +1217,14 @@ export default function DashboardClient({
             disabled={employees.length === 0}
           >
             Add salary record
+          </Button>
+
+          <Button
+            className="h-11 justify-center rounded-xl text-sm font-medium"
+            variant="secondary"
+            onClick={() => setIsOtherExpenseOpen(true)}
+          >
+            Add other expense
           </Button>
         </div>
 
@@ -746,7 +1243,6 @@ export default function DashboardClient({
                     key={emp.id}
                     className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2"
                   >
-                    {/* left: name + role */}
                     <div>
                       <div className="font-medium">{emp.name}</div>
                       {emp.role && (
@@ -756,7 +1252,6 @@ export default function DashboardClient({
                       )}
                     </div>
 
-                    {/* right: salary + actions */}
                     <div className="flex items-center gap-2">
                       {typeof emp.baseSalary === "number" && (
                         <div className="text-xs text-muted-foreground">
@@ -823,113 +1318,313 @@ export default function DashboardClient({
           )}
         </Card>
 
-        {/* Salary records area */}
-        <Card className="rounded-2xl border border-border/60 bg-card/80 p-8 shadow-sm">
-          {records.length > 0 ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <ReceiptIndianRupee className="h-4 w-4" />
-                <span>Salary records</span>
+        <div className="grid gap-3 md:grid-cols-2">
+          {/* Salary records area */}
+          <Card className="rounded-2xl border border-border/60 bg-card/80 p-8 shadow-sm">
+            {filteredRecords.length > 0 ? (
+              <div className="space-y-4">
+                <div className="text-sm font-medium">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ReceiptIndianRupee className="h-4 w-4" />
+                      <span>Salary records</span>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-lg text-xs font-medium"
+                      onClick={() => {
+                        exportRecordsCsv({
+                          records: filteredRecords,
+                          employees,
+                          fileName: `salary-records-${selectedYear}.csv`,
+                        });
+                      }}
+                      disabled={filteredRecords.length === 0}
+                    >
+                      Export CSV ({selectedYear})
+                    </Button>
+                  </div>
+                </div>
+                <ul className="space-y-2 text-sm">
+                  {filteredRecords.map((record) => (
+                    <li
+                      key={record.id}
+                      className="flex flex-col gap-1 rounded-lg border border-border/60 px-3 py-2 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {getEmployeeName(record.employeeId)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {getEmployeeRole(record.employeeId)
+                            ? `${getEmployeeRole(record.employeeId)} • `
+                            : null}
+                          {record.date
+                            ? `${formatDateDDMMYYYY(record.date)}`
+                            : ""}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-start gap-1 text-xs md:items-end">
+                        <div className="text-muted-foreground">
+                          Salary:{" "}
+                          <span className="font-medium">
+                            ₹ {(record.baseSalary ?? 0).toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                        <div className="text-muted-foreground">
+                          Expenses:{" "}
+                          <span className="font-medium">
+                            ₹ {record.totalExpenses.toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                        <div className="font-semibold text-foreground text-green-500">
+                          Grand total: ₹{" "}
+                          {record.grandTotal.toLocaleString("en-IN")}
+                        </div>
+
+                        <div className="mt-2 flex gap-2">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => openEditRecordDialog(record)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-red-500 hover:text-red-500"
+                            onClick={() => openDeleteRecordDialog(record)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                {/* to load more records */}
+                {recordsHasMore && (
+                  <div className="mt-3 flex justify-center">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={loadMoreRecords}
+                      disabled={recordsLoadingMore}
+                    >
+                      {recordsLoadingMore ? "Loading..." : "Load more records"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="text-sm font-medium">
+                  No salary records for {selectedYear}
+                </div>
+                <p className="text-xs text-muted-foreground max-w-sm">
+                  Add a salary record to see a summary of salary and expenses
+                  for each employee and month.
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-1 rounded-lg text-xs font-medium"
+                  variant="outline"
+                  onClick={() => setIsRecordOpen(true)}
+                  disabled={employees.length === 0}
+                >
+                  Add first salary record
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          {/* Other expenses area */}
+          <Card className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ReceiptIndianRupee className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Other expenses</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-muted-foreground">
+                  Total: ₹{" "}
+                  {filteredOtherExpenses
+                    .reduce((s, e) => s + e.amount, 0)
+                    .toLocaleString("en-IN")}
+                </div>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="rounded-lg text-xs font-medium"
-                  onClick={() => {
-                    const filtered = records.filter(
-                      (r) => r.year === currentYear
-                    );
-                    exportRecordsCsv({
-                      records: filtered,
-                      employees,
-                      fileName: `salary-records-${currentYear}.csv`,
-                    });
-                  }}
-                  disabled={records.length === 0}
+                  className="h-8 rounded-lg text-xs"
+                  asChild
                 >
-                  Export CSV ({currentYear})
+                  <Link href={`/other_expenses/`}>
+                    View All
+                    <ArrowRight className="ml-1 h-3 w-3" />
+                  </Link>
                 </Button>
               </div>
-              <ul className="space-y-2 text-sm">
-                {records.map((record) => (
-                  <li
-                    key={record.id}
-                    className="flex flex-col gap-1 rounded-lg border border-border/60 px-3 py-2 md:flex-row md:items-center md:justify-between"
-                  >
-                    {/* Left: employee + period */}
-                    <div>
-                      <div className="font-medium">
-                        {getEmployeeName(record.employeeId)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {getEmployeeRole(record.employeeId)
-                          ? `${getEmployeeRole(record.employeeId)} • `
-                          : null}
-                        {formatMonthYear(record.month, record.year)}
-                      </div>
-                    </div>
-
-                    {/* Right: money summary */}
-                    <div className="flex flex-col items-start gap-1 text-xs md:items-end">
-                      <div className="text-muted-foreground">
-                        Salary:{" "}
-                        <span className="font-medium">
-                          ₹ {(record.baseSalary ?? 0).toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                      <div className="text-muted-foreground">
-                        Expenses:{" "}
-                        <span className="font-medium">
-                          ₹ {record.totalExpenses.toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                      <div className="font-semibold text-foreground text-green-500">
-                        Grand total: ₹{" "}
-                        {record.grandTotal.toLocaleString("en-IN")}
-                      </div>
-
-                      <div className="mt-2 flex gap-2">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8"
-                          onClick={() => openEditRecordDialog(record)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-red-500 hover:text-red-500"
-                          onClick={() => openDeleteRecordDialog(record)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
             </div>
-          ) : (
-            <div className="flex flex-col items-center gap-3 text-center">
-              <div className="text-sm font-medium">No salary records yet</div>
-              <p className="text-xs text-muted-foreground max-w-sm">
-                Add a salary record to see a summary of salary and expenses for
-                each employee and month.
-              </p>
-              <Button
-                size="sm"
-                className="mt-1 rounded-lg text-xs font-medium"
-                variant="outline"
-                onClick={() => setIsRecordOpen(true)}
-                disabled={employees.length === 0}
-              >
-                Add first salary record
-              </Button>
-            </div>
-          )}
-        </Card>
+
+            {filteredOtherExpenses.length === 0 ? (
+              <div className="py-4 text-sm text-muted-foreground">
+                No other expenses recorded for {selectedYear}.
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`${
+                    isSwitching
+                      ? "opacity-70 scale-95 transition-all duration-200"
+                      : "opacity-100 transition-all duration-300"
+                  } space-y-3`}
+                >
+                  {groupedOtherExpenses
+                    .slice(0, visibleExpenseGroups) // 👈 show only first N groups
+                    .map((grp) => {
+                      const isOpen = !!openMonths[grp.key];
+
+                      return (
+                        <div
+                          key={grp.key}
+                          className="group rounded-lg border border-border/60 overflow-hidden"
+                        >
+                          {/* Header */}
+                          <div
+                            className="cursor-pointer list-none rounded-lg px-3 py-2 flex items-center justify-between bg-card/50"
+                            role="button"
+                            aria-expanded={isOpen}
+                            onClick={() =>
+                              setOpenMonths((prev) => ({
+                                ...prev,
+                                [grp.key]: !prev[grp.key],
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setOpenMonths((prev) => ({
+                                  ...prev,
+                                  [grp.key]: !prev[grp.key],
+                                }));
+                              }
+                            }}
+                            tabIndex={0}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="text-sm font-medium">
+                                {grp.label}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {grp.items.length} item
+                                {grp.items.length > 1 ? "s" : ""}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <div className="text-sm font-semibold">
+                                ₹ {grp.total.toLocaleString("en-IN")}
+                              </div>
+                              {isOpen ? (
+                                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Body */}
+                          {isOpen && (
+                            <div className="mt-2 space-y-2 px-3 pb-2">
+                              {grp.items.map((oe) => (
+                                <div
+                                  key={oe.id}
+                                  className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2"
+                                >
+                                  <div>
+                                    <div className="font-medium">
+                                      {oe.category}
+                                    </div>
+                                    {oe.description && (
+                                      <div className="text-xs text-muted-foreground">
+                                        {oe.description}
+                                      </div>
+                                    )}
+                                    <div className="text-[11px] text-muted-foreground mt-1">
+                                      {oe.date
+                                        ? formatDateDDMMYYYY(oe.date)
+                                        : oe.createdAt
+                                        ? formatDateDDMMYYYY(oe.createdAt)
+                                        : ""}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3">
+                                    <div className="text-xs text-muted-foreground text-right">
+                                      ₹ {oe.amount.toLocaleString("en-IN")}
+                                    </div>
+
+                                    <div className="flex items-center gap-1">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8"
+                                        onClick={() => openEditOtherDialog(oe)}
+                                      >
+                                        <Pencil className="h-4 w-4" />
+                                      </Button>
+
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 text-red-500 hover:text-red-500"
+                                        onClick={() =>
+                                          openDeleteOtherDialog(oe)
+                                        }
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* ---------- LOAD MORE BUTTON ---------- */}
+                {visibleExpenseGroups < groupedOtherExpenses.length && (
+                  <div className="pt-2 flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-lg text-xs"
+                      onClick={() =>
+                        setVisibleExpenseGroups((prev) => prev + 5)
+                      }
+                    >
+                      Load more
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        </div>
+        <div>
+          <footer className="mt-6 text-center text-xs text-muted-foreground">
+            &copy; {new Date().getFullYear()} Power Moon TechMed Pvt.Ltd,
+            Bhubaneswar | Odisha. All rights reserved.
+          </footer>
+        </div>
       </section>
 
       {/* Dialogs */}
@@ -974,6 +1669,35 @@ export default function DashboardClient({
         record={deleteRecord}
         onConfirmDelete={handleConfirmDeleteRecord}
       />
+
+      <AddOtherExpenseDialog
+        open={isOtherExpenseOpen}
+        onOpenChange={setIsOtherExpenseOpen}
+        onAdd={handleAddOtherExpense}
+      />
+
+      <EditOtherExpenseDialog
+        open={isEditOtherOpen}
+        onOpenChange={(open) => {
+          setIsEditOtherOpen(open);
+          if (!open) setEditingOther(null);
+        }}
+        expense={editingOther}
+        onSave={(exp) => handleSaveOther(exp)}
+      />
+
+      <DeleteOtherExpenseDialog
+        open={isDeleteOtherOpen}
+        onOpenChange={(open) => {
+          setIsDeleteOtherOpen(open);
+          if (!open) setDeleteOther(null);
+        }}
+        expense={deleteOther}
+        onConfirmDelete={(id) => handleConfirmDeleteOther(id)}
+      />
     </main>
   );
 }
+
+// Made with ❤️ by Naman for Power Moon TechMed Pvt.Ltd
+// Special thanks to Kaushik Behura for the Project Idea and Support

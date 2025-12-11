@@ -16,9 +16,20 @@ export type SalaryRecord = {
   id: string;
   employeeId: string;
   year: number;
-  month: number; // 1-12
+  month: number;
   baseSalary: number | null;
-  expenses: SalaryExpense[];
   totalExpenses: number;
-  grandTotal: number; // salary + totalExpenses
+  grandTotal: number;
+  expenses: SalaryExpense[];
+  date?: string | null; // ISO YYYY-MM-DD
+};
+
+export type OtherExpense = {
+  id: string;
+  userId?: string | null;
+  category: string;
+  amount: number;
+  date?: string | null; // ISO YYYY-MM-DD
+  description?: string | null;
+  createdAt?: string | null;
 };

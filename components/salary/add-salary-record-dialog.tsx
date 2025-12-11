@@ -23,22 +23,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import type { Employee, SalaryExpense, SalaryRecord } from "@/lib/types";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Trash2 } from "lucide-react";
 
 const recordSchema = z.object({
   employeeId: z.string().min(1, "Employee is required"),
-  month: z.string().min(1, "Month is required"),
-  year: z
+  date: z
     .string()
-    .min(4, "Year is required")
-    .refine((val) => !Number.isNaN(Number(val)), "Year must be a number"),
+    .min(10, "Date is required")
+    .refine((val) => {
+      // basic check for YYYY-MM-DD from input[type=date]
+      return /^\d{4}-\d{2}-\d{2}$/.test(val);
+    }, "Invalid date"),
   salary: z
     .string()
     .optional()
@@ -47,30 +42,7 @@ const recordSchema = z.object({
       "Must be a valid non-negative number"
     ),
 });
-
 type RecordFormValues = z.infer<typeof recordSchema>;
-
-interface AddSalaryRecordDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  employees: Employee[];
-  onAdd: (record: SalaryRecord) => Promise<void> | void;
-}
-
-const MONTHS = [
-  { label: "January", value: 1 },
-  { label: "February", value: 2 },
-  { label: "March", value: 3 },
-  { label: "April", value: 4 },
-  { label: "May", value: 5 },
-  { label: "June", value: 6 },
-  { label: "July", value: 7 },
-  { label: "August", value: 8 },
-  { label: "September", value: 9 },
-  { label: "October", value: 10 },
-  { label: "November", value: 11 },
-  { label: "December", value: 12 },
-];
 
 // simple expense draft type for inside the dialog
 type ExpenseDraft = {
@@ -79,6 +51,13 @@ type ExpenseDraft = {
   amount: string; // keep as string for inputs
   date: string; // "YYYY-MM-DD"
 };
+
+interface AddSalaryRecordDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  employees: Employee[];
+  onAdd: (record: SalaryRecord) => Promise<void> | void;
+}
 
 export function AddSalaryRecordDialog({
   open,
@@ -90,8 +69,7 @@ export function AddSalaryRecordDialog({
     resolver: zodResolver(recordSchema),
     defaultValues: {
       employeeId: "",
-      month: "",
-      year: String(new Date().getFullYear()),
+      date: new Date().toISOString().slice(0, 10), // today's date "YYYY-MM-DD"
       salary: "",
     },
   });
@@ -109,8 +87,7 @@ export function AddSalaryRecordDialog({
     if (!open) {
       form.reset({
         employeeId: "",
-        month: "",
-        year: String(new Date().getFullYear()),
+        date: new Date().toISOString().slice(0, 10), // reset to today
         salary: "",
       });
       setExpenses([]);
@@ -156,6 +133,11 @@ export function AddSalaryRecordDialog({
         ? Number(values.salary)
         : null;
 
+    // month/year derived from values.date (YYYY-MM-DD)
+    const dateObj = new Date(values.date);
+    const monthNumber = dateObj.getMonth() + 1; // 1..12
+    const yearNumber = dateObj.getFullYear();
+
     const normalizedExpenses: SalaryExpense[] = expenses
       .map((e) => {
         const amt = Number(e.amount);
@@ -174,18 +156,16 @@ export function AddSalaryRecordDialog({
       0
     );
 
-    const monthObj = MONTHS.find((m) => String(m.value) === values.month);
-    const monthNumber = monthObj ? monthObj.value : 1;
-
     const record: SalaryRecord = {
       id: crypto.randomUUID(),
       employeeId: values.employeeId,
-      year: Number(values.year),
+      year: yearNumber,
       month: monthNumber,
       baseSalary,
       expenses: normalizedExpenses,
       totalExpenses,
       grandTotal: (baseSalary ?? 0) + totalExpenses,
+      date: values.date, // store ISO YYYY-MM-DD
     };
 
     onAdd(record);
@@ -198,7 +178,7 @@ export function AddSalaryRecordDialog({
         <DialogHeader>
           <DialogTitle>Add salary record</DialogTitle>
           <DialogDescription>
-            Record this month&apos;s salary and any additional expenses for an
+            Record this month's salary and any additional expenses for an
             employee.
           </DialogDescription>
         </DialogHeader>
@@ -217,22 +197,21 @@ export function AddSalaryRecordDialog({
                   <FormItem>
                     <FormLabel>Employee</FormLabel>
                     <FormControl>
-                      <Select
-                        onValueChange={field.onChange}
+                      <select
                         value={field.value}
+                        onChange={(e) => field.onChange(e.target.value)}
+                        className="block w-full rounded-md border border-input px-3 py-2 text-sm"
                       >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select employee" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {employees.map((emp) => (
-                            <SelectItem key={emp.id} value={emp.id}>
-                              {emp.name}
-                              {emp.role ? ` (${emp.role})` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        <option value="" disabled>
+                          Select employee
+                        </option>
+                        {employees.map((emp) => (
+                          <option key={emp.id} value={emp.id}>
+                            {emp.name}
+                            {emp.role ? ` (${emp.role})` : ""}
+                          </option>
+                        ))}
+                      </select>
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -242,26 +221,12 @@ export function AddSalaryRecordDialog({
               <div className="grid grid-cols-2 gap-3">
                 <FormField
                   control={form.control}
-                  name="month"
+                  name="date"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Month</FormLabel>
+                      <FormLabel>Date</FormLabel>
                       <FormControl>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Month" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {MONTHS.map((m) => (
-                              <SelectItem key={m.value} value={String(m.value)}>
-                                {m.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Input type="date" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -270,37 +235,23 @@ export function AddSalaryRecordDialog({
 
                 <FormField
                   control={form.control}
-                  name="year"
+                  name="salary"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Year</FormLabel>
+                      <FormLabel>Salary</FormLabel>
                       <FormControl>
-                        <Input type="number" inputMode="numeric" {...field} />
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="Enter salary amount"
+                          {...field}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
               </div>
-
-              <FormField
-                control={form.control}
-                name="salary"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Salary</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        placeholder="Enter salary amount"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
             </div>
 
             {/* Expenses */}
