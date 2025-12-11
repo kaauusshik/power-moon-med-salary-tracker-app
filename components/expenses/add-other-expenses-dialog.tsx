@@ -107,12 +107,9 @@ export function AddOtherExpenseDialog({ open, onOpenChange, onAdd }: Props) {
               name="category"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Category</FormLabel>
+                  <FormLabel>Name</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="e.g. Office supplies, Rent"
-                      {...field}
-                    />
+                    <Input placeholder="Enter Name Here" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -152,9 +149,13 @@ export function AddOtherExpenseDialog({ open, onOpenChange, onAdd }: Props) {
               name="description"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Description (optional)</FormLabel>
+                  <FormLabel>Description (or Category)</FormLabel>
                   <FormControl>
-                    <Textarea {...field} rows={3} />
+                    <Textarea
+                      placeholder="Optional e.g. Monthly office rent, Printer ink"
+                      {...field}
+                      rows={3}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

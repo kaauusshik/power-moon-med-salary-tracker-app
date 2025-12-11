@@ -97,7 +97,7 @@ export function EditOtherExpenseDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">
-              Category
+              Name
             </label>
             <Input
               value={draft?.category ?? ""}
@@ -152,7 +152,7 @@ export function EditOtherExpenseDialog({
 
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">
-              Description (optional)
+              Description (or Category)
             </label>
             <Input
               value={draft?.description ?? ""}
