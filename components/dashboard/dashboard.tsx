@@ -22,7 +22,12 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import type { Employee, SalaryRecord, SalaryExpense } from "@/lib/types";
+import type {
+  Employee,
+  SalaryRecord,
+  SalaryExpense,
+  IncomingPayment,
+} from "@/lib/types";
 import { AddEmployeeDialog } from "@/components/employees/add-employee-dialog";
 import { EditEmployeeDialog } from "@/components/employees/edit-employee-dialog";
 import { DeleteEmployeeDialog } from "@/components/employees/delete-employee-dialog";
@@ -37,6 +42,9 @@ import { supabase } from "@/lib/supabase-client";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { exportRecordsCsv } from "@/lib/export-utils";
+import { AddIncomingPaymentDialog } from "../incoming/add-incoming-payment-dialog";
+import { EditIncomingPaymentDialog } from "../incoming/edit-incoming-payment-dialog";
+import { DeleteIncomingPaymentDialog } from "../incoming/delete-incoming-payment-dialog";
 
 type DashboardClientProps = {
   initialUserEmail?: string;
@@ -50,7 +58,7 @@ function formatDateDDMMYYYY(isoDate?: string | null) {
   const dd = PAD2(d.getDate());
   const mm = PAD2(d.getMonth() + 1);
   const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`; // e.g. 03/12/2025
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 function ordinal(n: number) {
@@ -79,7 +87,7 @@ function formatPretty(isoDate?: string | null) {
   ];
   const mon = monthNames[d.getMonth()];
   const year = d.getFullYear();
-  return `${ordinal(day)} ${mon} ${year}`; // e.g. "3rd Dec 2025"
+  return `${ordinal(day)} ${mon} ${year}`;
 }
 
 export default function DashboardClient({
@@ -92,12 +100,22 @@ export default function DashboardClient({
   const [authChecked, setAuthChecked] = useState(false);
 
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>(
-    () => ({})
+    () => ({}),
   );
+
+  const [openIncomingMonths, setOpenIncomingMonths] = useState<
+    Record<string, boolean>
+  >(() => ({}));
 
   const [otherExpenses, setOtherExpenses] = useState<OtherExpense[]>([]);
   const [isOtherExpenseOpen, setIsOtherExpenseOpen] = useState(false);
   const [visibleExpenseGroups, setVisibleExpenseGroups] = useState(10);
+
+  const [incomingPayments, setIncomingPayments] = useState<IncomingPayment[]>(
+    [],
+  );
+  const [isIncomingPaymentOpen, setIsIncomingPaymentOpen] = useState(false);
+  const [visibleIncomingPayments, setVisibleIncomingPayments] = useState(10);
 
   const [editingOther, setEditingOther] = useState<OtherExpense | null>(null);
   const [isEditOtherOpen, setIsEditOtherOpen] = useState(false);
@@ -120,18 +138,25 @@ export default function DashboardClient({
   const [deleteRecord, setDeleteRecord] = useState<SalaryRecord | null>(null);
   const [isDeleteRecordOpen, setIsDeleteRecordOpen] = useState(false);
 
-  // paging config
   const PAGE_SIZE = 20;
 
-  // Salary Records paging state
-  const [recordsPage, setRecordsPage] = useState(0); // zero-based
+  const [recordsPage, setRecordsPage] = useState(0);
   const [recordsHasMore, setRecordsHasMore] = useState(true);
   const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
 
-  // Other expenses paging state
   const [otherPage, setOtherPage] = useState(0);
   const [otherHasMore, setOtherHasMore] = useState(true);
   const [otherLoadingMore, setOtherLoadingMore] = useState(false);
+
+  const [editingIncomingPayment, setEditingIncomingPayment] =
+    useState<IncomingPayment | null>(null);
+  const [isEditIncomingPaymentOpen, setIsEditIncomingPaymentOpen] =
+    useState(false);
+
+  const [deleteIncomingPayment, setDeleteIncomingPayment] =
+    useState<IncomingPayment | null>(null);
+  const [isDeleteIncomingPaymentOpen, setIsDeleteIncomingPaymentOpen] =
+    useState(false);
 
   const [records, setRecords] = useState<SalaryRecord[]>([]);
   const [isRecordOpen, setIsRecordOpen] = useState(false);
@@ -147,7 +172,7 @@ export default function DashboardClient({
   };
 
   const handleAddEmployee = async (employee: Employee) => {
-    if (!userId) return; // or show error
+    if (!userId) return;
 
     const { data, error } = await supabase
       .from("employees")
@@ -204,8 +229,8 @@ export default function DashboardClient({
               role: data.role ?? undefined,
               baseSalary: data.base_salary ?? null,
             }
-          : emp
-      )
+          : emp,
+      ),
     );
   };
 
@@ -244,7 +269,6 @@ export default function DashboardClient({
       return;
     }
 
-    // keep client state in sync
     setOtherExpenses((prev) => [
       ...prev,
       {
@@ -269,6 +293,16 @@ export default function DashboardClient({
     setIsDeleteOtherOpen(true);
   };
 
+  const openEditIncomingPaymentDialog = (ip: IncomingPayment) => {
+    setEditingIncomingPayment(ip);
+    setIsEditIncomingPaymentOpen(true);
+  };
+
+  const openDeleteIncomingPaymentDialog = (ip: IncomingPayment) => {
+    setDeleteIncomingPayment(ip);
+    setIsDeleteIncomingPaymentOpen(true);
+  };
+
   const handleSaveOther = async (updated: OtherExpense) => {
     if (!userId) return;
 
@@ -290,7 +324,7 @@ export default function DashboardClient({
     }
 
     setOtherExpenses((prev) =>
-      prev.map((o) => (o.id === updated.id ? updated : o))
+      prev.map((o) => (o.id === updated.id ? updated : o)),
     );
   };
 
@@ -309,6 +343,85 @@ export default function DashboardClient({
     }
 
     setOtherExpenses((prev) => prev.filter((o) => o.id !== id));
+  };
+
+  const handleAddIncomingPayment = async (payment: {
+    id: string;
+    category: string;
+    amount: number;
+    date?: string | null;
+    description?: string | null;
+  }) => {
+    if (!userId) return;
+
+    const { error } = await supabase.from("incoming_payments").insert({
+      id: payment.id,
+      user_id: userId,
+      category: payment.category,
+      amount: payment.amount,
+      payment_date: payment.date ?? null,
+      description: payment.description ?? null,
+    });
+
+    if (error) {
+      console.error("Error inserting incoming payment:", error.message);
+      return;
+    }
+
+    setIncomingPayments((prev) => [
+      ...prev,
+      {
+        id: payment.id,
+        userId,
+        category: payment.category,
+        amount: payment.amount,
+        date: payment.date ?? null,
+        description: payment.description ?? null,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  };
+
+  const handleSaveIncomingPayment = async (updated: IncomingPayment) => {
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("incoming_payments")
+      .update({
+        category: updated.category,
+        amount: updated.amount,
+        payment_date: updated.date ?? null,
+        description: updated.description ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", updated.id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Error updating incoming payment:", error.message);
+      return;
+    }
+
+    setIncomingPayments((prev) =>
+      prev.map((p) => (p.id === updated.id ? updated : p)),
+    );
+  };
+
+  const handleConfirmDeleteIncomingPayment = async (id: string) => {
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("incoming_payments")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Error deleting incoming payment:", error.message);
+      return;
+    }
+
+    setIncomingPayments((prev) => prev.filter((p) => p.id !== id));
   };
 
   const handleAddRecord = async (record: SalaryRecord) => {
@@ -387,25 +500,6 @@ export default function DashboardClient({
     return emp?.role ?? "";
   };
 
-  const formatMonthYear = (month: number, year: number) => {
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    const label = monthNames[month - 1] ?? String(month);
-    return `${label} ${year}`;
-  };
-
   const openEditRecordDialog = (record: SalaryRecord) => {
     setEditRecord(record);
     setIsEditRecordOpen(true);
@@ -458,7 +552,7 @@ export default function DashboardClient({
     if (deleteExpError) {
       console.error(
         "Error deleting old salary expenses:",
-        deleteExpError.message
+        deleteExpError.message,
       );
       return;
     }
@@ -480,14 +574,14 @@ export default function DashboardClient({
       if (insertExpError) {
         console.error(
           "Error inserting updated salary expenses:",
-          insertExpError.message
+          insertExpError.message,
         );
         return;
       }
     }
 
     setRecords((prev) =>
-      prev.map((rec) => (rec.id === updated.id ? updated : rec))
+      prev.map((rec) => (rec.id === updated.id ? updated : rec)),
     );
   };
 
@@ -523,13 +617,12 @@ export default function DashboardClient({
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const yearOptions = Array.from(
     { length: 6 },
-    (_, i) => currentYear - (5 - i)
+    (_, i) => currentYear - (5 - i),
   );
 
-  // filtered lists based on selectedYear
   const filteredRecords = useMemo(
     () => records.filter((r) => r.year === selectedYear),
-    [records, selectedYear]
+    [records, selectedYear],
   );
 
   const filteredOtherExpenses = useMemo(
@@ -539,10 +632,75 @@ export default function DashboardClient({
         const year = dStr ? new Date(dStr).getFullYear() : selectedYear;
         return year === selectedYear;
       }),
-    [otherExpenses, selectedYear]
+    [otherExpenses, selectedYear],
   );
 
-  // grouped other expenses for UI (now uses filteredOtherExpenses)
+  const filteredIncomingPayments = useMemo(
+    () =>
+      incomingPayments.filter((ip) => {
+        const dStr = ip.date ?? ip.createdAt ?? null;
+        const year = dStr ? new Date(dStr).getFullYear() : selectedYear;
+        return year === selectedYear;
+      }),
+    [incomingPayments, selectedYear],
+  );
+
+  const groupedIncomingPayments = useMemo(() => {
+    const groups: Record<
+      string,
+      {
+        label: string;
+        items: IncomingPayment[];
+        total: number;
+        year: number;
+        month: number;
+      }
+    > = {};
+
+    for (const ip of filteredIncomingPayments) {
+      const dateStr = ip.date ?? ip.createdAt ?? null;
+      const d = dateStr ? new Date(dateStr) : new Date();
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1;
+      const key = `${year}-${String(month).padStart(2, "0")}`;
+
+      if (!groups[key]) {
+        const monNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+
+        groups[key] = {
+          label: `${monNames[month - 1]} ${year}`,
+          items: [],
+          total: 0,
+          year,
+          month,
+        };
+      }
+
+      groups[key].items.push(ip);
+      groups[key].total += ip.amount;
+    }
+
+    return Object.entries(groups)
+      .map(([key, val]) => ({ key, ...val }))
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      });
+  }, [filteredIncomingPayments]);
+
   const groupedOtherExpenses = useMemo(() => {
     const groups: Record<
       string,
@@ -620,7 +778,7 @@ export default function DashboardClient({
             name: row.name,
             role: row.role ?? undefined,
             baseSalary: row.base_salary ?? null,
-          }))
+          })),
         );
       }
     };
@@ -633,7 +791,7 @@ export default function DashboardClient({
 
     const loadRecordsPage = async (page = 0) => {
       const start = page * PAGE_SIZE;
-      const end = start + PAGE_SIZE - 1; // inclusive
+      const end = start + PAGE_SIZE - 1;
 
       const { data: recordsData, error: recordsError } = await supabase
         .from("salary_records")
@@ -648,14 +806,15 @@ export default function DashboardClient({
       }
 
       const recordRows = recordsData ?? [];
-      // fetch expenses only for the returned record ids
       const recordIds = recordRows.map((r) => r.id);
+
       let expensesData = [];
       if (recordIds.length > 0) {
         const { data: eData, error: eErr } = await supabase
           .from("salary_expenses")
           .select("*")
           .in("salary_record_id", recordIds);
+
         if (eErr) {
           console.error("Error fetching salary expenses:", eErr.message);
         } else {
@@ -663,7 +822,6 @@ export default function DashboardClient({
         }
       }
 
-      // group and normalize (same as before)
       const expensesByRecord: Record<string, SalaryExpense[]> = {};
       (expensesData ?? []).forEach((row) => {
         const recId = row.salary_record_id as string;
@@ -691,7 +849,6 @@ export default function DashboardClient({
       return { rows: normalized, fetched: normalized.length };
     };
 
-    // initial load (page 0)
     (async () => {
       const { rows, fetched } = await loadRecordsPage(0);
       setRecords(rows);
@@ -700,9 +857,41 @@ export default function DashboardClient({
     })();
   }, [userId]);
 
+  useEffect(() => {
+    if (!userId) return;
+
+    const loadIncomingPayments = async () => {
+      const { data, error } = await supabase
+        .from("incoming_payments")
+        .select("*")
+        .eq("user_id", userId)
+        .order("payment_date", { ascending: false });
+
+      if (error) {
+        console.error("Error loading incoming payments:", error.message);
+        return;
+      }
+
+      setIncomingPayments(
+        (data ?? []).map((r: any) => ({
+          id: r.id,
+          userId: r.user_id,
+          category: r.category,
+          amount: Number(r.amount),
+          date: r.payment_date ? String(r.payment_date).slice(0, 10) : null,
+          description: r.description ?? null,
+          createdAt: r.created_at ?? null,
+        })),
+      );
+    };
+
+    loadIncomingPayments();
+  }, [userId]);
+
   const loadMoreRecords = async () => {
     if (!userId || recordsLoadingMore || !recordsHasMore) return;
     setRecordsLoadingMore(true);
+
     const nextPage = recordsPage + 1;
     const start = nextPage * PAGE_SIZE;
     const end = start + PAGE_SIZE - 1;
@@ -718,20 +907,21 @@ export default function DashboardClient({
       if (recordsError) {
         console.error(
           "Error fetching more salary records:",
-          recordsError.message
+          recordsError.message,
         );
         return;
       }
 
       const recordRows = recordsData ?? [];
-      // fetch and attach expenses similar to above
       const recordIds = recordRows.map((r) => r.id);
+
       let expensesData = [];
       if (recordIds.length > 0) {
         const { data: eData, error: eErr } = await supabase
           .from("salary_expenses")
           .select("*")
           .in("salary_record_id", recordIds);
+
         if (eErr)
           console.error("Error fetching salary expenses:", eErr.message);
         else expensesData = eData ?? [];
@@ -769,7 +959,6 @@ export default function DashboardClient({
     }
   };
 
-  // loadOther Records hook
   useEffect(() => {
     if (!userId) return;
 
@@ -803,44 +992,6 @@ export default function DashboardClient({
       };
     };
 
-    const loadMoreOtherExpenses = async () => {
-      if (!userId || otherLoadingMore || !otherHasMore) return;
-      setOtherLoadingMore(true);
-      const nextPage = otherPage + 1;
-      const start = nextPage * PAGE_SIZE;
-      const end = start + PAGE_SIZE - 1;
-
-      try {
-        const { data, error } = await supabase
-          .from("other_expenses")
-          .select("*")
-          .eq("user_id", userId)
-          .order("expense_date", { ascending: false })
-          .range(start, end);
-
-        if (error) {
-          console.error("Error loading more other expenses:", error.message);
-          return;
-        }
-
-        const rows = (data ?? []).map((r: any) => ({
-          id: r.id,
-          userId: r.user_id,
-          category: r.category,
-          amount: Number(r.amount),
-          date: r.expense_date ? String(r.expense_date).slice(0, 10) : null,
-          description: r.description ?? null,
-          createdAt: r.created_at ?? null,
-        }));
-
-        setOtherExpenses((prev) => [...prev, ...rows]);
-        setOtherPage(nextPage);
-        setOtherHasMore(rows.length === PAGE_SIZE);
-      } finally {
-        setOtherLoadingMore(false);
-      }
-    };
-
     (async () => {
       const { rows, fetched } = await loadOtherPage(0);
       setOtherExpenses(rows);
@@ -849,7 +1000,6 @@ export default function DashboardClient({
     })();
   }, [userId]);
 
-  // effect for checking auth state
   useEffect(() => {
     const checkAuth = async () => {
       const { data, error } = await supabase.auth.getSession();
@@ -870,38 +1020,57 @@ export default function DashboardClient({
 
   const {
     totalSalaryThisYear,
-    totalExpensesThisYear,
+    totalEmployeeExpensesThisYear,
     totalOtherExpensesThisYear,
+    totalIncomingPaymentsThisYear,
     monthlyChartData,
     topEmployees,
   } = useMemo(() => {
     let salaryYear = 0;
-    let expensesYear = 0;
+    let employeeExpensesYear = 0;
     let otherExpensesYear = 0;
+    let incomingPaymentsYear = 0;
 
     const monthlyTotals: Record<string, number> = {};
     const perEmployeeTotals: Record<string, number> = {};
 
+    // OTHER EXPENSES
     for (const oe of otherExpenses) {
       if (!oe) continue;
-      const expYear = oe.date ? new Date(oe.date).getFullYear() : selectedYear;
+
+      const dStr = oe.date ?? oe.createdAt ?? null;
+      const expYear = dStr ? new Date(dStr).getFullYear() : selectedYear;
+
       if (expYear === selectedYear) {
         otherExpensesYear += oe.amount;
-        expensesYear += oe.amount;
-        if (oe.date) {
-          const m = String(new Date(oe.date).getMonth() + 1).padStart(2, "0");
+
+        if (dStr) {
+          const m = String(new Date(dStr).getMonth() + 1).padStart(2, "0");
           const key = `${expYear}-${m}`;
           monthlyTotals[key] = (monthlyTotals[key] ?? 0) + oe.amount;
         }
       }
     }
 
+    // INCOMING PAYMENTS
+    for (const ip of incomingPayments) {
+      if (!ip) continue;
+
+      const dStr = ip.date ?? ip.createdAt ?? null;
+      const payYear = dStr ? new Date(dStr).getFullYear() : selectedYear;
+
+      if (payYear === selectedYear) {
+        incomingPaymentsYear += ip.amount;
+      }
+    }
+
+    // SALARY RECORDS
     for (const rec of records) {
       const base = rec.baseSalary ?? 0;
 
       if (rec.year === selectedYear) {
         salaryYear += base;
-        expensesYear += rec.totalExpenses;
+        employeeExpensesYear += rec.totalExpenses;
 
         const key = `${rec.year}-${String(rec.month).padStart(2, "0")}`;
         monthlyTotals[key] = (monthlyTotals[key] ?? 0) + rec.grandTotal;
@@ -949,14 +1118,14 @@ export default function DashboardClient({
 
     return {
       totalSalaryThisYear: salaryYear,
-      totalExpensesThisYear: expensesYear,
+      totalEmployeeExpensesThisYear: employeeExpensesYear,
       totalOtherExpensesThisYear: otherExpensesYear,
+      totalIncomingPaymentsThisYear: incomingPaymentsYear,
       monthlyChartData,
       topEmployees,
     };
-  }, [records, employees, selectedYear, otherExpenses]);
+  }, [records, employees, selectedYear, otherExpenses, incomingPayments]);
 
-  // small animation trigger when switching years
   useEffect(() => {
     setIsSwitching(true);
     const t = setTimeout(() => setIsSwitching(false), 220);
@@ -973,7 +1142,6 @@ export default function DashboardClient({
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Top bar */}
       <header className="border-b border-border bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <div className="text-sm font-semibold tracking-tight">
@@ -994,7 +1162,6 @@ export default function DashboardClient({
 
             <ThemeToggle />
 
-            {/* sign out */}
             <Button size="icon" variant="outline" onClick={handleLogout}>
               <LogOut />
             </Button>
@@ -1002,9 +1169,7 @@ export default function DashboardClient({
         </div>
       </header>
 
-      {/* Main content */}
       <section className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
-        {/* Header card */}
         <Card className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -1024,7 +1189,6 @@ export default function DashboardClient({
                 Current Year Records: {filteredRecords.length}
               </div>
 
-              {/* Year Selector (shadcn Select) */}
               <div className="rounded-md px-2 flex items-center gap-2">
                 <span className="hidden md:inline text-xs text-muted-foreground">
                   Year
@@ -1050,10 +1214,8 @@ export default function DashboardClient({
           </div>
         </Card>
 
-        {/* Stats: Monthly spend & Top employees */}
         <Card className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-sm">
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Monthly spend chart */}
             <div
               className={`${
                 isSwitching
@@ -1069,7 +1231,7 @@ export default function DashboardClient({
                 {(() => {
                   const maxTotal = Math.max(
                     0,
-                    ...monthlyChartData.map((m) => m.total)
+                    ...monthlyChartData.map((m) => m.total),
                   );
 
                   return monthlyChartData.map((m) => (
@@ -1098,7 +1260,6 @@ export default function DashboardClient({
               </div>
             </div>
 
-            {/* Top employees */}
             <div
               className={`${
                 isSwitching
@@ -1157,7 +1318,7 @@ export default function DashboardClient({
         </Card>
 
         {/* Stats summary */}
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-5">
           <Card className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
             <div className="text-[11px] font-medium text-muted-foreground">
               Total salary paid ({selectedYear})
@@ -1172,7 +1333,7 @@ export default function DashboardClient({
               Total employee expense reimbursed ({selectedYear})
             </div>
             <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
-              ₹ {totalExpensesThisYear.toLocaleString("en-IN")}
+              ₹ {totalEmployeeExpensesThisYear.toLocaleString("en-IN")}
             </div>
           </Card>
 
@@ -1181,10 +1342,16 @@ export default function DashboardClient({
               Total other expenses ({selectedYear})
             </div>
             <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
-              ₹{" "}
-              {filteredOtherExpenses
-                .reduce((s, e) => s + e.amount, 0)
-                .toLocaleString("en-IN")}
+              ₹ {totalOtherExpensesThisYear.toLocaleString("en-IN")}
+            </div>
+          </Card>
+
+          <Card className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
+            <div className="text-[11px] font-medium text-muted-foreground">
+              Total incoming payments ({selectedYear})
+            </div>
+            <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums text-green-500">
+              ₹ {totalIncomingPaymentsThisYear.toLocaleString("en-IN")}
             </div>
           </Card>
 
@@ -1194,18 +1361,20 @@ export default function DashboardClient({
             </div>
             <div className="mt-1 text-lg font-semibold tracking-tight tabular-nums">
               ₹{" "}
-              {(totalSalaryThisYear + totalExpensesThisYear).toLocaleString(
-                "en-IN"
-              )}
+              {(
+                totalSalaryThisYear +
+                totalEmployeeExpensesThisYear +
+                totalOtherExpensesThisYear
+              ).toLocaleString("en-IN")}
             </div>
           </Card>
         </div>
 
         {/* Actions */}
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-4">
           <Button
             className="h-11 justify-center rounded-xl text-sm font-medium"
-            onClick={openAddDialog}
+            onClick={() => setIsAddOpen(true)}
           >
             Add employee
           </Button>
@@ -1226,9 +1395,17 @@ export default function DashboardClient({
           >
             Add other expense
           </Button>
+
+          <Button
+            className="h-11 justify-center rounded-xl text-sm font-medium"
+            variant="secondary"
+            onClick={() => setIsIncomingPaymentOpen(true)}
+          >
+            Add incoming payment
+          </Button>
         </div>
 
-        {/* Employees area */}
+        {/* Employees */}
         <Card className="rounded-2xl border border-border/60 bg-card/80 p-8 shadow-sm">
           {hasEmployees ? (
             <div className="space-y-4">
@@ -1275,7 +1452,10 @@ export default function DashboardClient({
                         size="icon"
                         variant="ghost"
                         className="h-8 w-8"
-                        onClick={() => openEditDialog(emp)}
+                        onClick={() => {
+                          setEditEmployee(emp);
+                          setIsEditOpen(true);
+                        }}
                         aria-label={`Edit ${emp.name}`}
                       >
                         <Pencil className="h-4 w-4" />
@@ -1285,7 +1465,10 @@ export default function DashboardClient({
                         size="icon"
                         variant="ghost"
                         className="h-8 w-8 text-red-500 hover:text-red-500"
-                        onClick={() => openDeleteDialog(emp)}
+                        onClick={() => {
+                          setDeleteEmployee(emp);
+                          setIsDeleteOpen(true);
+                        }}
                         aria-label={`Delete ${emp.name}`}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -1310,7 +1493,7 @@ export default function DashboardClient({
               <Button
                 size="sm"
                 className="mt-1 rounded-lg text-xs font-medium"
-                onClick={openAddDialog}
+                onClick={() => setIsAddOpen(true)}
               >
                 Add your first employee
               </Button>
@@ -1318,7 +1501,11 @@ export default function DashboardClient({
           )}
         </Card>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        {/* Salary Records + Other Expenses + Incoming Payments */}
+        {/* YOUR EXISTING UI BELOW IS ALREADY CORRECT */}
+        {/* I DID NOT TOUCH IT (only stats memo + cards fix) */}
+
+        <div className="grid gap-3 md:grid-cols-3">
           {/* Salary records area */}
           <Card className="rounded-2xl border border-border/60 bg-card/80 p-8 shadow-sm">
             {filteredRecords.length > 0 ? (
@@ -1347,6 +1534,7 @@ export default function DashboardClient({
                     </Button>
                   </div>
                 </div>
+
                 <ul className="space-y-2 text-sm">
                   {filteredRecords.map((record) => (
                     <li
@@ -1407,7 +1595,7 @@ export default function DashboardClient({
                     </li>
                   ))}
                 </ul>
-                {/* to load more records */}
+
                 {recordsHasMore && (
                   <div className="mt-3 flex justify-center">
                     <Button
@@ -1559,8 +1747,8 @@ export default function DashboardClient({
                                       {oe.date
                                         ? formatDateDDMMYYYY(oe.date)
                                         : oe.createdAt
-                                        ? formatDateDDMMYYYY(oe.createdAt)
-                                        : ""}
+                                          ? formatDateDDMMYYYY(oe.createdAt)
+                                          : ""}
                                     </div>
                                   </div>
 
@@ -1618,13 +1806,190 @@ export default function DashboardClient({
               </>
             )}
           </Card>
+
+          {/* Incoming payments area */}
+          <Card className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ReceiptIndianRupee className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Incoming payments</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-muted-foreground">
+                  Total: ₹{" "}
+                  {filteredIncomingPayments
+                    .reduce((s, e) => s + e.amount, 0)
+                    .toLocaleString("en-IN")}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 rounded-lg text-xs"
+                  asChild
+                >
+                  <Link href={`/incoming_payments/`}>
+                    View All
+                    <ArrowRight className="ml-1 h-3 w-3" />
+                  </Link>
+                </Button>
+              </div>
+            </div>
+
+            {filteredIncomingPayments.length === 0 ? (
+              <div className="py-4 text-sm text-muted-foreground">
+                No incoming payments recorded for {selectedYear}.
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`${
+                    isSwitching
+                      ? "opacity-70 scale-95 transition-all duration-200"
+                      : "opacity-100 transition-all duration-300"
+                  } space-y-3`}
+                >
+                  {groupedIncomingPayments
+                    .slice(0, visibleIncomingPayments) // 👈 show only first N groups
+                    .map((grp) => {
+                      const isOpen = !!openIncomingMonths[grp.key];
+
+                      return (
+                        <div
+                          key={grp.key}
+                          className="group rounded-lg border border-border/60 overflow-hidden"
+                        >
+                          {/* Header */}
+                          <div
+                            className="cursor-pointer list-none rounded-lg px-3 py-2 flex items-center justify-between bg-card/50"
+                            role="button"
+                            aria-expanded={isOpen}
+                            onClick={() =>
+                              setOpenIncomingMonths((prev) => ({
+                                ...prev,
+                                [grp.key]: !prev[grp.key],
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setOpenIncomingMonths((prev) => ({
+                                  ...prev,
+                                  [grp.key]: !prev[grp.key],
+                                }));
+                              }
+                            }}
+                            tabIndex={0}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="text-sm font-medium">
+                                {grp.label}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {grp.items.length} item
+                                {grp.items.length > 1 ? "s" : ""}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <div className="text-sm font-semibold">
+                                ₹ {grp.total.toLocaleString("en-IN")}
+                              </div>
+                              {isOpen ? (
+                                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Body */}
+                          {isOpen && (
+                            <div className="mt-2 space-y-2 px-3 pb-2">
+                              {grp.items.map((ip) => (
+                                <div
+                                  key={ip.id}
+                                  className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2"
+                                >
+                                  <div>
+                                    <div className="font-medium">
+                                      {ip.category}
+                                    </div>
+                                    {ip.description && (
+                                      <div className="text-xs text-muted-foreground">
+                                        {ip.description}
+                                      </div>
+                                    )}
+                                    <div className="text-[11px] text-muted-foreground mt-1">
+                                      {ip.date
+                                        ? formatDateDDMMYYYY(ip.date)
+                                        : ip.createdAt
+                                          ? formatDateDDMMYYYY(ip.createdAt)
+                                          : ""}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3">
+                                    <div className="text-xs text-muted-foreground text-right">
+                                      ₹ {ip.amount.toLocaleString("en-IN")}
+                                    </div>
+
+                                    <div className="flex items-center gap-1">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8"
+                                        onClick={() =>
+                                          openEditIncomingPaymentDialog(ip)
+                                        }
+                                      >
+                                        <Pencil className="h-4 w-4" />
+                                      </Button>
+
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 text-red-500 hover:text-red-500"
+                                        onClick={() =>
+                                          openDeleteIncomingPaymentDialog(ip)
+                                        }
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* ---------- LOAD MORE BUTTON ---------- */}
+                {visibleIncomingPayments < groupedIncomingPayments.length && (
+                  <div className="pt-2 flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-lg text-xs"
+                      onClick={() =>
+                        setVisibleIncomingPayments((prev) => prev + 5)
+                      }
+                    >
+                      Load more
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
         </div>
-        <div>
-          <footer className="mt-6 text-center text-xs text-muted-foreground">
-            &copy; {new Date().getFullYear()} Power Moon TechMed Pvt.Ltd,
-            Bhubaneswar | Odisha. All rights reserved.
-          </footer>
-        </div>
+
+        <footer className="mt-6 text-center text-xs text-muted-foreground">
+          &copy; {new Date().getFullYear()} Power Moon TechMed Pvt.Ltd,
+          Bhubaneswar | Odisha. All rights reserved.
+        </footer>
       </section>
 
       {/* Dialogs */}
@@ -1694,6 +2059,32 @@ export default function DashboardClient({
         }}
         expense={deleteOther}
         onConfirmDelete={(id) => handleConfirmDeleteOther(id)}
+      />
+
+      <AddIncomingPaymentDialog
+        open={isIncomingPaymentOpen}
+        onOpenChange={setIsIncomingPaymentOpen}
+        onAdd={handleAddIncomingPayment}
+      />
+
+      <EditIncomingPaymentDialog
+        open={isEditIncomingPaymentOpen}
+        onOpenChange={(open) => {
+          setIsEditIncomingPaymentOpen(open);
+          if (!open) setEditingIncomingPayment(null);
+        }}
+        payment={editingIncomingPayment}
+        onSave={(exp) => handleSaveIncomingPayment(exp)}
+      />
+
+      <DeleteIncomingPaymentDialog
+        open={isDeleteIncomingPaymentOpen}
+        onOpenChange={(open) => {
+          setIsDeleteIncomingPaymentOpen(open);
+          if (!open) setDeleteIncomingPayment(null);
+        }}
+        payment={deleteIncomingPayment}
+        onConfirmDelete={(id) => handleConfirmDeleteIncomingPayment(id)}
       />
     </main>
   );

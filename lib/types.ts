@@ -33,3 +33,13 @@ export type OtherExpense = {
   description?: string | null;
   createdAt?: string | null;
 };
+
+export type IncomingPayment = {
+  id: string;
+  userId: string;
+  category: string;
+  amount: number;
+  date?: string | null;
+  description?: string | null;
+  createdAt?: string | null;
+};
