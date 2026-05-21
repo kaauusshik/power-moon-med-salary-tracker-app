@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type KeyboardEvent } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Select,
@@ -21,6 +22,7 @@ import {
   ReceiptIndianRupee,
   ChevronDown,
   ChevronUp,
+  Search,
 } from "lucide-react";
 import type {
   Employee,
@@ -164,6 +166,171 @@ export default function DashboardClient({
   const hasEmployees = employees.length > 0;
 
   const [isSwitching, setIsSwitching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+
+  type SearchSuggestion = {
+    id: string;
+    type: "employee" | "salary" | "other" | "incoming";
+    title: string;
+    subtitle: string;
+    actionLabel: string;
+  };
+
+  const searchSuggestions = useMemo(() => {
+    const normalized = searchQuery.trim().toLowerCase();
+    if (!normalized) {
+      return [] as SearchSuggestion[];
+    }
+
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+
+    const matches: SearchSuggestion[] = [];
+
+    employees.forEach((employee) => {
+      const title = employee.name;
+      const subtitle = employee.role ?? "Employee";
+      const searchText = `${title} ${subtitle}`.toLowerCase();
+      if (searchText.includes(normalized)) {
+        matches.push({
+          id: employee.id,
+          type: "employee",
+          title,
+          subtitle,
+          actionLabel: "View employee",
+        });
+      }
+    });
+
+    records.forEach((record) => {
+      const employeeName = employees.find((emp) => emp.id === record.employeeId)
+        ?.name;
+      const title = employeeName
+        ? `${employeeName} — ${monthNames[record.month - 1]} ${record.year}`
+        : `Salary record ${record.id}`;
+      const subtitle = `₹ ${(record.grandTotal || 0).toLocaleString("en-IN")}`;
+      const searchText = `${title} ${subtitle}`.toLowerCase();
+      if (searchText.includes(normalized)) {
+        matches.push({
+          id: record.id,
+          type: "salary",
+          title,
+          subtitle,
+          actionLabel: "Jump to salary records",
+        });
+      }
+    });
+
+    otherExpenses.forEach((expense) => {
+      const title = expense.category;
+      const subtitle = `${expense.description ?? "Other expense"} • ₹ ${(
+        expense.amount || 0
+      ).toLocaleString("en-IN")}`;
+      const searchText = `${title} ${subtitle}`.toLowerCase();
+      if (searchText.includes(normalized)) {
+        matches.push({
+          id: expense.id,
+          type: "other",
+          title,
+          subtitle,
+          actionLabel: "View other expenses",
+        });
+      }
+    });
+
+    incomingPayments.forEach((payment) => {
+      const title = payment.category;
+      const subtitle = `${payment.description ?? "Incoming payment"} • ₹ ${(
+        payment.amount || 0
+      ).toLocaleString("en-IN")}`;
+      const searchText = `${title} ${subtitle}`.toLowerCase();
+      if (searchText.includes(normalized)) {
+        matches.push({
+          id: payment.id,
+          type: "incoming",
+          title,
+          subtitle,
+          actionLabel: "View incoming payments",
+        });
+      }
+    });
+
+    return matches.slice(0, 6);
+  }, [searchQuery, employees, records, otherExpenses, incomingPayments]);
+
+  const handleSearchSelect = (suggestion: SearchSuggestion) => {
+    setSearchQuery("");
+    setSearchFocused(false);
+    setSelectedSuggestionIndex(0);
+
+    if (suggestion.type === "employee") {
+      router.push(`/employees/${suggestion.id}`);
+      return;
+    }
+
+    if (suggestion.type === "salary") {
+      const section = document.getElementById("salary-records");
+      section?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
+    if (suggestion.type === "other") {
+      router.push("/other_expenses");
+      return;
+    }
+
+    if (suggestion.type === "incoming") {
+      router.push("/incoming_payments");
+      return;
+    }
+  };
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!searchSuggestions.length) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedSuggestionIndex((prev) =>
+        prev === searchSuggestions.length - 1 ? 0 : prev + 1,
+      );
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedSuggestionIndex((prev) =>
+        prev === 0 ? searchSuggestions.length - 1 : prev - 1,
+      );
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handleSearchSelect(searchSuggestions[selectedSuggestionIndex]);
+    }
+  };
+
+  const handleSearchInputChange = (value: string) => {
+    setSearchQuery(value);
+    setSelectedSuggestionIndex(0);
+  };
+
+  const handleSearchBlur = () => {
+    window.setTimeout(() => setSearchFocused(false), 100);
+  };
+
+  const handleSearchFocus = () => {
+    setSearchFocused(true);
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -1144,8 +1311,8 @@ export default function DashboardClient({
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <div className="text-sm font-semibold tracking-tight">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
             <Image
               src="/pmtmed_icon_512px.png"
               alt="Logo"
@@ -1153,7 +1320,63 @@ export default function DashboardClient({
               height={24}
               className="inline-block mr-2"
             />
-            Power Moon TechMed Pvt.Ltd
+            <div className="text-sm font-semibold tracking-tight">
+              Power Moon TechMed Pvt.Ltd
+            </div>
+          </div>
+
+          <div className="relative w-full max-w-md">
+            <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
+              <Search className="h-4 w-4" />
+            </div>
+            <Input
+              value={searchQuery}
+              onChange={(event) => handleSearchInputChange(event.target.value)}
+              onFocus={handleSearchFocus}
+              onBlur={handleSearchBlur}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Search employees, records, expenses..."
+              className="pl-10"
+            />
+            {searchFocused && searchQuery.trim().length > 0 && (
+              <div className="absolute left-0 right-0 z-50 mt-2 overflow-hidden rounded-xl border border-border/70 bg-card shadow-lg">
+                <ul className="divide-y divide-border/70">
+                  {searchSuggestions.length > 0 ? (
+                    searchSuggestions.map((suggestion, index) => (
+                      <li
+                        key={`${suggestion.type}-${suggestion.id}`}
+                        className={
+                          "cursor-pointer px-3 py-3 transition hover:bg-accent/60 " +
+                          (index === selectedSuggestionIndex
+                            ? "bg-accent/80"
+                            : "bg-card")
+                        }
+                        onMouseDown={() => handleSearchSelect(suggestion)}
+                        onMouseEnter={() => setSelectedSuggestionIndex(index)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="font-medium text-sm text-foreground">
+                              {suggestion.title}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {suggestion.subtitle}
+                            </p>
+                          </div>
+                          <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                            {suggestion.actionLabel}
+                          </span>
+                        </div>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="px-3 py-3 text-sm text-muted-foreground">
+                      No matches found.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -1508,7 +1731,10 @@ export default function DashboardClient({
 
         <div className="grid gap-3 md:grid-cols-3">
           {/* Salary records area */}
-          <Card className="rounded-2xl border border-border/60 bg-card/80 p-8 shadow-sm">
+          <Card
+            id="salary-records"
+            className="rounded-2xl border border-border/60 bg-card/80 p-8 shadow-sm"
+          >
             {filteredRecords.length > 0 ? (
               <div className="space-y-4">
                 <div className="text-sm font-medium">
