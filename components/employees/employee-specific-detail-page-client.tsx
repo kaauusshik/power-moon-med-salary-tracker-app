@@ -88,6 +88,7 @@ export function EmployeeSpecificDetailPageClient() {
     return segments[segments.length - 1] ?? "";
   }, [pathname]);
 
+  const [userId, setUserId] = useState<string | null>(null);
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [records, setRecords] = useState<SalaryRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,12 +97,21 @@ export function EmployeeSpecificDetailPageClient() {
   const [editRecord, setEditRecord] = useState<SalaryRecord | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
 
+  // Auth check and get userId
+  useEffect(() => {
+    const check = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session) {
+        router.push("/auth");
+        return;
+      }
+      setUserId(data.session.user.id);
+    };
+    check();
+  }, [router]);
+
   const handleSaveRecord = async (updated: SalaryRecord) => {
     try {
-      // get current user id (for user_id filter)
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user.id;
-
       if (!userId) {
         console.error("No authenticated user, cannot update salary record.");
         return;
@@ -138,7 +148,7 @@ export function EmployeeSpecificDetailPageClient() {
       if (deleteExpError) {
         console.error(
           "Error deleting old salary expenses:",
-          deleteExpError.message
+          deleteExpError.message,
         );
         return;
       }
@@ -160,7 +170,7 @@ export function EmployeeSpecificDetailPageClient() {
         if (insertExpError) {
           console.error(
             "Error inserting updated salary expenses:",
-            insertExpError.message
+            insertExpError.message,
           );
           return;
         }
@@ -168,7 +178,7 @@ export function EmployeeSpecificDetailPageClient() {
 
       // 3. Sync local state so UI updates immediately
       setRecords((prev) =>
-        prev.map((r) => (r.id === updated.id ? updated : r))
+        prev.map((r) => (r.id === updated.id ? updated : r)),
       );
     } catch (err) {
       console.error("Unexpected error updating salary record:", err);
@@ -176,18 +186,18 @@ export function EmployeeSpecificDetailPageClient() {
   };
 
   const [deletingRecord, setDeletingRecord] = useState<SalaryRecord | null>(
-    null
+    null,
   );
   const [deleting, setDeleting] = useState(false);
 
   const totalPaid = useMemo(
     () => records.reduce((sum, r) => sum + r.grandTotal, 0),
-    [records]
+    [records],
   );
 
   const totalExpenses = useMemo(
     () => records.reduce((sum, r) => sum + r.totalExpenses, 0),
-    [records]
+    [records],
   );
 
   const formatMonthYear = (month: number, year: number) => {
@@ -210,14 +220,15 @@ export function EmployeeSpecificDetailPageClient() {
   };
 
   const handleDeleteRecord = async () => {
-    if (!deletingRecord) return;
+    if (!deletingRecord || !userId) return;
     setDeleting(true);
 
     try {
       const { error } = await supabase
         .from("salary_records")
         .delete()
-        .eq("id", deletingRecord.id);
+        .eq("id", deletingRecord.id)
+        .eq("user_id", userId);
 
       if (error) {
         console.error("Error deleting salary record:", error.message);
@@ -235,8 +246,10 @@ export function EmployeeSpecificDetailPageClient() {
 
   useEffect(() => {
     const load = async () => {
-      if (!id) {
-        setError("No employee id in URL.");
+      if (!id || !userId) {
+        if (!id) {
+          setError("No employee id in URL.");
+        }
         setLoading(false);
         return;
       }
@@ -271,11 +284,11 @@ export function EmployeeSpecificDetailPageClient() {
       };
       setEmployee(employeeObj);
 
-      // 2) records
       const { data: recordsData, error: recError } = await supabase
         .from("salary_records")
         .select("*")
         .eq("employee_id", id)
+        .eq("user_id", userId)
         .order("year", { ascending: false })
         .order("month", { ascending: false });
 
@@ -336,7 +349,7 @@ export function EmployeeSpecificDetailPageClient() {
     };
 
     load();
-  }, [id]);
+  }, [id, userId]);
 
   // UI states
   if (loading) {
@@ -550,7 +563,7 @@ export function EmployeeSpecificDetailPageClient() {
                             }}
                             aria-label={`Edit record ${formatMonthYear(
                               record.month,
-                              record.year
+                              record.year,
                             )}`}
                           >
                             <Pencil className="h-3 w-3" />

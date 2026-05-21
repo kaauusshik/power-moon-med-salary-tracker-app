@@ -138,7 +138,7 @@ export default function DashboardClient({
   const [deleteRecord, setDeleteRecord] = useState<SalaryRecord | null>(null);
   const [isDeleteRecordOpen, setIsDeleteRecordOpen] = useState(false);
 
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 40;
 
   const [recordsPage, setRecordsPage] = useState(0);
   const [recordsHasMore, setRecordsHasMore] = useState(true);
@@ -797,8 +797,9 @@ export default function DashboardClient({
         .from("salary_records")
         .select("*")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .range(start, end);
+        .order("year", { ascending: false })
+        .order("month", { ascending: false })
+        .order("created_at", { ascending: false });
 
       if (recordsError) {
         console.error("Error fetching salary records:", recordsError.message);
@@ -901,8 +902,9 @@ export default function DashboardClient({
         .from("salary_records")
         .select("*")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .range(start, end);
+        .order("year", { ascending: false })
+        .order("month", { ascending: false })
+        .order("created_at", { ascending: false });
 
       if (recordsError) {
         console.error(
@@ -970,8 +972,7 @@ export default function DashboardClient({
         .from("other_expenses")
         .select("*")
         .eq("user_id", userId)
-        .order("expense_date", { ascending: false })
-        .range(start, end);
+        .order("expense_date", { ascending: false });
 
       if (error) {
         console.error("Error loading other expenses:", error.message);

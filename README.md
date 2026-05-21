@@ -16,6 +16,10 @@ A modern, intuitive salary tracking and financial management tool built with [Ne
 - Added Incoming Payments section and page
 - Fixed minor bugs
 
+> 📊 Update - 0.2.1
+
+- Fixed Data Loading issue for the year 2025 or older
+
 ## 🛠️ Built With
 
 - **Framework**: [Next.js](https://nextjs.org) with TypeScript

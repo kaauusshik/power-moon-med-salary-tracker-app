@@ -41,7 +41,7 @@ export default function RootLayout({
       <body
         className={cn(
           "min-h-screen bg-background text-foreground",
-          inter.className
+          inter.className,
         )}
       >
         <ThemeProvider
